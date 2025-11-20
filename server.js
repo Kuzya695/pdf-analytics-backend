@@ -1,4 +1,4 @@
-// server.js - ОБНОВЛЕННЫЙ С ИСПРАВЛЕННЫМ ПАРСИНГОМ РУССКОГО ТЕКСТА
+// server.js - ИСПРАВЛЕННЫЙ ПАРСЕР БЕЗ ПОРЧИ ТЕКСТА
 const express = require('express');
 const cors = require('cors');
 const { S3 } = require('@aws-sdk/client-s3');
@@ -18,49 +18,78 @@ const s3 = new S3({
   }
 });
 
-// 🔧 УЛУЧШЕННЫЕ ФУНКЦИИ ПАРСИНГА С ОБРАБОТКОЙ РУССКОГО ТЕКСТА
+// 📋 ОСНОВНЫЕ ENDPOINTS
 
-// Функция исправления проблем с кодировкой русского текста
-function fixRussianEncoding(text) {
-  if (!text) return '';
-  
-  return text
-    // Исправляем common issues с русской кодировкой
-    .replace(/or/g, 'от')
-    .replace(/hon6pa/g, 'ноября')
-    .replace(/Cuer/g, 'Счет')
-    .replace(/中axrypa/g, 'фактура')
-    .replace(/npaawepe/g, 'приложение')
-    .replace(/N°/g, '№')
-    .replace(/No/g, '№')
-    // Восстанавливаем кириллицу из искаженных символов
-    .replace(/Pewenua/g, 'Решения')
-    .replace(/Vintep/g, 'Интер')
-    .replace(/OOO/g, 'ООО')
-    // Убираем лишние пробелы
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+app.get('/health', (req, res) => {
+  res.json({ status: 'PDF Analytics Backend работает!', version: '1.0 - стабильный' });
+});
 
-// Улучшенная функция извлечения данных
+// Список PDF файлов
+app.get('/api/files', async (req, res) => {
+  try {
+    const result = await s3.listObjectsV2({
+      Bucket: 'faktura35',
+      Prefix: 'С-фактура(PDF)/'
+    });
+    
+    const pdfFiles = result.Contents
+      .filter(item => item.Key.endsWith('.pdf'))
+      .map(item => ({
+        name: item.Key.split('/').pop(),
+        key: item.Key,
+        size: item.Size,
+        lastModified: item.LastModified
+      }));
+
+    res.json({ files: pdfFiles });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Парсинг конкретного PDF файла
+app.get('/api/parse/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    
+    // Скачиваем PDF из S3
+    const pdfData = await s3.getObject({
+      Bucket: 'faktura35',
+      Key: `С-фактура(PDF)/${filename}`
+    });
+    
+    // Конвертируем Buffer в Uint8Array для pdf-parse
+    const pdfBuffer = await pdfData.Body.transformToByteArray();
+    
+    // Парсим PDF
+    const data = await pdfParse(pdfBuffer);
+    
+    // Извлекаем данные из текста
+    const extractedData = extractDataFromText(data.text, filename);
+    
+    res.json({
+      filename: filename,
+      extractedData: extractedData
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 📊 ФУНКЦИИ ПАРСИНГА
+
 function extractDataFromText(text, filename) {
-  // ПРЕДВАРИТЕЛЬНАЯ ОБРАБОТКА ТЕКСТА
-  const cleanedText = fixRussianEncoding(text);
-  
-  console.log('📄 Оригинальный текст:', text.substring(0, 500));
-  console.log('🔧 Очищенный текст:', cleanedText.substring(0, 500));
-  
+  // ПРОСТО используем оригинальный текст без "исправлений"
   return {
-    date: extractDateFormatted(cleanedText, filename),
-    contractor: extractContractor(cleanedText),
-    amount: extractAmount(cleanedText, filename),
-    incomingNumber: extractIncomingNumber(cleanedText),
-    comment: extractComment(cleanedText)
+    date: extractDate(text, filename),
+    contractor: extractContractor(text),
+    amount: extractAmount(text, filename),
+    incomingNumber: extractIncomingNumber(text),
+    comment: extractComment(text)
   };
 }
 
-// Улучшенное извлечение даты
-function extractDateFormatted(text, filename) {
+function extractDate(text, filename) {
   // Вариант 1: Ищем в формате "16 ноября 2025 г."
   const dateMatch1 = text.match(/(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})\s*г?/i);
   if (dateMatch1) {
@@ -96,7 +125,6 @@ function extractDateFormatted(text, filename) {
   return "не найдена";
 }
 
-// Улучшенное извлечение контрагента
 function extractContractor(text) {
   // Ищем в разных вариантах
   const patterns = [
@@ -118,7 +146,6 @@ function extractContractor(text) {
   return "";
 }
 
-// Улучшенное извлечение суммы
 function extractAmount(text, filename) {
   // Сначала из имени файла
   const filenameMatch = filename.match(/=\s*([\d.,]+)/);
@@ -148,7 +175,6 @@ function extractAmount(text, filename) {
   return 0;
 }
 
-// 🔥 УЛУЧШЕННОЕ ИЗВЛЕЧЕНИЕ ВХОДЯЩЕГО НОМЕРА
 function extractIncomingNumber(text) {
   // Ищем номер счета-фактуры в разных форматах
   const patterns = [
@@ -164,16 +190,13 @@ function extractIncomingNumber(text) {
   for (let pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      console.log('🔍 Найден номер:', match[1]);
       return match[1];
     }
   }
   
-  console.log('❌ Номер не найден в тексте');
   return "";
 }
 
-// Улучшенное извлечение комментария
 function extractComment(text) {
   // Ищем в разных вариантах написания Счет-Оферты
   const patterns = [
@@ -197,131 +220,8 @@ function extractComment(text) {
   return "";
 }
 
-// 📊 НОВЫЙ ENDPOINT - ПАРСИНГ ВСЕХ ФАЙЛОВ СРАЗУ
-app.get('/api/parse-all', async (req, res) => {
-  try {
-    console.log('🔄 Начинаем парсинг всех файлов...');
-    
-    // Получаем список файлов
-    const result = await s3.listObjectsV2({
-      Bucket: 'faktura35',
-      Prefix: 'С-фактура(PDF)/'
-    });
-    
-    const pdfFiles = result.Contents
-      .filter(item => item.Key.endsWith('.pdf'))
-      .map(item => ({
-        name: item.Key.split('/').pop(),
-        key: item.Key,
-        size: item.Size,
-        lastModified: item.LastModified
-      }));
-
-    console.log(`📁 Найдено ${pdfFiles.length} PDF файлов`);
-
-    // Парсим каждый файл
-    const parsedData = [];
-    
-    for (const file of pdfFiles.slice(0, 10)) { // Ограничим первые 10 для теста
-      try {
-        console.log(`🔍 Парсим файл: ${file.name}`);
-        
-        const pdfData = await s3.getObject({
-          Bucket: 'faktura35',
-          Key: file.key
-        });
-        
-        const pdfBuffer = await pdfData.Body.transformToByteArray();
-        const data = await pdfParse(pdfBuffer);
-        
-        const extractedData = extractDataFromText(data.text, file.name);
-        
-        parsedData.push({
-          filename: file.name,
-          ...extractedData
-        });
-        
-        console.log(`✅ Успешно: ${file.name}`, extractedData);
-        
-      } catch (fileError) {
-        console.error(`❌ Ошибка парсинга ${file.name}:`, fileError.message);
-        parsedData.push({
-          filename: file.name,
-          error: fileError.message
-        });
-      }
-    }
-
-    res.json({
-      totalFiles: pdfFiles.length,
-      parsedFiles: parsedData.length,
-      data: parsedData
-    });
-    
-  } catch (error) {
-    console.error('💥 Критическая ошибка:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Существующие endpoints остаются без изменений
-app.get('/health', (req, res) => {
-  res.json({ status: 'PDF Analytics Backend работает!', version: '2.0 - улучшенный парсинг' });
-});
-
-app.get('/api/files', async (req, res) => {
-  try {
-    const result = await s3.listObjectsV2({
-      Bucket: 'faktura35',
-      Prefix: 'С-фактура(PDF)/'
-    });
-    
-    const pdfFiles = result.Contents
-      .filter(item => item.Key.endsWith('.pdf'))
-      .map(item => ({
-        name: item.Key.split('/').pop(),
-        key: item.Key,
-        size: item.Size,
-        lastModified: item.LastModified
-      }));
-
-    res.json({ files: pdfFiles });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/parse/:filename', async (req, res) => {
-  try {
-    const filename = req.params.filename;
-    console.log(`🔍 Запрос на парсинг: ${filename}`);
-    
-    const pdfData = await s3.getObject({
-      Bucket: 'faktura35',
-      Key: `С-фактура(PDF)/${filename}`
-    });
-    
-    const pdfBuffer = await pdfData.Body.transformToByteArray();
-    const data = await pdfParse(pdfBuffer);
-    
-    const extractedData = extractDataFromText(data.text, filename);
-    
-    res.json({
-      filename: filename,
-      extractedData: extractedData,
-      debug: {
-        textSample: data.text.substring(0, 500),
-        cleanedText: fixRussianEncoding(data.text).substring(0, 500)
-      }
-    });
-  } catch (error) {
-    console.error('❌ Ошибка парсинга:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  console.log(`🔧 Версия: Улучшенный парсинг русского текста`);
+  console.log(`✅ Парсер работает в стабильном режиме`);
 });
