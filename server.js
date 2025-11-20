@@ -138,9 +138,24 @@ function extractIncomingNumber(text) {
 }
 
 function extractComment(text) {
-  // Ищем комментарий из "Счет-Оферта № 0134086922-0566"
-  const match = text.match(/Счет-Оферта\s+№?\s*\d+-(\d+)/);
-  return match ? match[1] : "";
+  // Ищем в разных вариантах написания
+  const patterns = [
+    /Счет-Оферта\s+No\s*(\d+)-(\d+)/,  // "Счет-Оферта No 0134086922-0566"
+    /Счет-Оферта\s+№\s*(\d+)-(\d+)/,   // с русским №
+    /Счет-Оферта[^]*?(\d{4})/           // ищем 4 цифры после
+  ];
+  
+  for (let pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      // Возвращаем последние 4 цифры (0566)
+      if (match[2]) return match[2];
+      if (match[1] && match[1].length >= 4) return match[1].slice(-4);
+      if (match[1]) return match[1];
+    }
+  }
+  
+  return "";
 }
 
 const PORT = process.env.PORT || 3000;
