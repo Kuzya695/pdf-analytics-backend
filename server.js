@@ -10,6 +10,14 @@ app.get('/health', (req, res) => {
   res.json({ status: 'PDF Analytics Backend работает!' });
 });
 
+// Новый endpoint для списка PDF файлов
+app.get('/api/files', (req, res) => {
+  res.json({ 
+    message: 'Здесь будет список PDF файлов из Yandex Cloud',
+    files: []
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
