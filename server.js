@@ -67,7 +67,6 @@ app.get('/api/parse/:filename', async (req, res) => {
     
     res.json({
       filename: filename,
-      text: data.text, // весь текст из PDF
       extractedData: extractedData
     });
   } catch (error) {
@@ -78,86 +77,70 @@ app.get('/api/parse/:filename', async (req, res) => {
 // Функция извлечения данных из текста PDF
 function extractDataFromText(text, filename) {
   return {
-    date: extractDate(text, filename),
-    number: extractNumber(text, filename),
+    date: extractDateFormatted(text),
+    contractor: extractContractor(text),
     amount: extractAmount(text, filename),
-    nds: extractNDS(text, filename),
-    supplier: extractSupplier(text),
-    buyer: extractBuyer(text),
-    supplierName: extractSupplierName(text),
-    buyerName: extractBuyerName(text),
-    supplierINN: extractSupplierINN(text),
-    buyerINN: extractBuyerINN(text),
-    product: extractProduct(text),
-    status: "parsed"
+    incomingNumber: extractIncomingNumber(text),
+    comment: extractComment(text)
   };
 }
 
 // Вспомогательные функции для парсинга
-function extractDate(text, filename) {
-  // Сначала из имени файла
-  const filenameMatch = filename.match(/(\d{2}\.\d{2}\.\d{2})/);
-  if (filenameMatch) return filenameMatch[1];
+function extractDateFormatted(text) {
+  // Ищем дату в формате "16 ноября 2025 г." и конвертируем в "16.11.2025"
+  const match = text.match(/(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
+  if (match) {
+    const months = {
+      'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
+      'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
+      'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
+    };
+    const day = match[1].padStart(2, '0');
+    const month = months[match[2].toLowerCase()];
+    const year = match[3];
+    return `${day}.${month}.${year}`;
+  }
   
-  // Потом из текста PDF
-  const textMatch = text.match(/(\d{2}\.\d{2}\.\d{4})/);
-  return textMatch ? textMatch[1] : "не найдена";
+  // Если не нашли, пробуем из имени файла
+  const filenameMatch = filename.match(/(\d{2})\.(\d{2})\.(\d{2})/);
+  if (filenameMatch) {
+    const day = filenameMatch[1];
+    const month = filenameMatch[2];
+    const year = `20${filenameMatch[3]}`;
+    return `${day}.${month}.${year}`;
+  }
+  
+  return "не найдена";
 }
 
-function extractNumber(text, filename) {
-  const match = filename.match(/№\s*(\d+-\d+)/);
-  return match ? match[1] : "не найден";
-}
-
-function extractAmount(text, filename) {
-  const match = filename.match(/=\s*([\d.]+)/);
-  return match ? parseFloat(match[1]) : 0;
-}
-
-function extractNDS(text, filename) {
-  const match = filename.match(/НДС\s*([\d.]+)/);
-  return match ? parseFloat(match[1]) : 0;
-}
-
-function extractSupplier(text) {
-  if (text.includes('Поставщик')) return "Поставщик найден";
-  if (text.includes('ООО') || text.includes('ИП')) return "Юр. лицо";
-  return "Поставщик";
-}
-
-function extractBuyer(text) {
-  if (text.includes('Покупатель')) return "Покупатель найден";
-  return "Покупатель";
-}
-
-function extractSupplierName(text) {
+function extractContractor(text) {
+  // Ищем продавца/поставщика
   const match = text.match(/Продавец\s+([^\n]+)/);
   return match ? match[1].trim() : "";
 }
 
-function extractBuyerName(text) {
-  const match = text.match(/Покупатель\s+([^\n]+)/);
-  return match ? match[1].trim() : "";
+function extractAmount(text, filename) {
+  // Сначала из имени файла
+  const filenameMatch = filename.match(/=\s*([\d.]+)/);
+  if (filenameMatch) return parseFloat(filenameMatch[1]);
+  
+  // Потом из текста PDF
+  const textMatch = text.match(/Всего к оплате[\s\S]*?([\d.,]+)/);
+  if (textMatch) return parseFloat(textMatch[1].replace(',', '.'));
+  
+  return 0;
 }
 
-function extractSupplierINN(text) {
-  const match = text.match(/ИНН\/КПП продавца\s+([^\n]+)/);
-  return match ? match[1].trim() : "";
+function extractIncomingNumber(text) {
+  // Ищем номер счета-фактуры
+  const match = text.match(/Счет-фактура\s+No?\s*(\d+\/\d+)/);
+  return match ? match[1] : "";
 }
 
-function extractBuyerINN(text) {
-  const match = text.match(/ИНН\/КПП покупателя\s+([^\n]+)/);
-  return match ? match[1].trim() : "";
-}
-
-function extractProduct(text) {
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes('Свежая нота') || lines[i].includes('салфетки')) {
-      return lines[i].trim();
-    }
-  }
-  return "Товар/услуга";
+function extractComment(text) {
+  // Ищем комментарий из "Счет-Оферта № 0134086922-0566"
+  const match = text.match(/Счет-Оферта\s+№?\s*\d+-(\d+)/);
+  return match ? match[1] : "";
 }
 
 const PORT = process.env.PORT || 3000;
