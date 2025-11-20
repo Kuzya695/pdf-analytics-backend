@@ -56,8 +56,11 @@ app.get('/api/parse/:filename', async (req, res) => {
       Key: `С-фактура(PDF)/${filename}`
     });
     
+    // Конвертируем Buffer в Uint8Array для pdf-parse
+    const pdfBuffer = await pdfData.Body.transformToByteArray();
+    
     // Парсим PDF
-    const data = await pdfParse(pdfData.Body);
+    const data = await pdfParse(pdfBuffer);
     
     // Извлекаем данные из текста
     const extractedData = extractDataFromText(data.text, filename);
@@ -74,22 +77,26 @@ app.get('/api/parse/:filename', async (req, res) => {
 
 // Функция извлечения данных из текста PDF
 function extractDataFromText(text, filename) {
-  // Пока простой парсинг - завтра улучшим
   return {
     date: extractDate(text, filename),
     number: extractNumber(text, filename),
     amount: extractAmount(text, filename),
     nds: extractNDS(text, filename),
-    supplier: "Извлекается...",
+    supplier: extractSupplier(text),
+    buyer: extractBuyer(text),
     status: "parsed"
   };
 }
 
 // Вспомогательные функции для парсинга
 function extractDate(text, filename) {
-  // Пока из имени файла
-  const match = filename.match(/(\d{2}\.\d{2}\.\d{2})/);
-  return match ? match[1] : "не найдена";
+  // Сначала из имени файла
+  const filenameMatch = filename.match(/(\d{2}\.\d{2}\.\d{2})/);
+  if (filenameMatch) return filenameMatch[1];
+  
+  // Потом из текста PDF
+  const textMatch = text.match(/(\d{2}\.\d{2}\.\d{4})/);
+  return textMatch ? textMatch[1] : "не найдена";
 }
 
 function extractNumber(text, filename) {
@@ -105,6 +112,19 @@ function extractAmount(text, filename) {
 function extractNDS(text, filename) {
   const match = filename.match(/НДС\s*([\d.]+)/);
   return match ? parseFloat(match[1]) : 0;
+}
+
+function extractSupplier(text) {
+  // Простой поиск поставщика в тексте
+  if (text.includes('Поставщик')) return "Поставщик найден";
+  if (text.includes('ООО') || text.includes('ИП')) return "Юр. лицо";
+  return "Поставщик";
+}
+
+function extractBuyer(text) {
+  // Простой поиск покупателя
+  if (text.includes('Покупатель')) return "Покупатель найден";
+  return "Покупатель";
 }
 
 const PORT = process.env.PORT || 3000;
