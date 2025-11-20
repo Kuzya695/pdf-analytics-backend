@@ -1,5 +1,5 @@
 {
-  "name": "pdf-analytics-backend", 
+  "name": "pdf-analytics-backend",
   "version": "1.0.0",
   "scripts": {
     "start": "node server.js"
@@ -7,6 +7,7 @@
   "dependencies": {
     "express": "^4.18.0",
     "cors": "^2.8.5",
-    "@aws-sdk/client-s3": "^3.450.0"
+    "@aws-sdk/client-s3": "^3.450.0",
+    "pdf-parse": "^1.1.1"
   }
 }
