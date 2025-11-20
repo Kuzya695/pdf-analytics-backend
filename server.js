@@ -84,6 +84,11 @@ function extractDataFromText(text, filename) {
     nds: extractNDS(text, filename),
     supplier: extractSupplier(text),
     buyer: extractBuyer(text),
+    supplierName: extractSupplierName(text),
+    buyerName: extractBuyerName(text),
+    supplierINN: extractSupplierINN(text),
+    buyerINN: extractBuyerINN(text),
+    product: extractProduct(text),
     status: "parsed"
   };
 }
@@ -115,16 +120,44 @@ function extractNDS(text, filename) {
 }
 
 function extractSupplier(text) {
-  // Простой поиск поставщика в тексте
   if (text.includes('Поставщик')) return "Поставщик найден";
   if (text.includes('ООО') || text.includes('ИП')) return "Юр. лицо";
   return "Поставщик";
 }
 
 function extractBuyer(text) {
-  // Простой поиск покупателя
   if (text.includes('Покупатель')) return "Покупатель найден";
   return "Покупатель";
+}
+
+function extractSupplierName(text) {
+  const match = text.match(/Продавец\s+([^\n]+)/);
+  return match ? match[1].trim() : "";
+}
+
+function extractBuyerName(text) {
+  const match = text.match(/Покупатель\s+([^\n]+)/);
+  return match ? match[1].trim() : "";
+}
+
+function extractSupplierINN(text) {
+  const match = text.match(/ИНН\/КПП продавца\s+([^\n]+)/);
+  return match ? match[1].trim() : "";
+}
+
+function extractBuyerINN(text) {
+  const match = text.match(/ИНН\/КПП покупателя\s+([^\n]+)/);
+  return match ? match[1].trim() : "";
+}
+
+function extractProduct(text) {
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('Свежая нота') || lines[i].includes('салфетки')) {
+      return lines[i].trim();
+    }
+  }
+  return "Товар/услуга";
 }
 
 const PORT = process.env.PORT || 3000;
