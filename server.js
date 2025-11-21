@@ -80,16 +80,40 @@ app.get('/api/parse/:filename', async (req, res) => {
   }
 });
 
-// Эндпоинт для скачивания PDF файла
+// Эндпоинт для скачивания PDF файла - ИСПРАВЛЕННАЯ ВЕРСИЯ
 app.get('/api/download/:filename', async (req, res) => {
   try {
-    const filename = req.params.filename;
-    console.log(`📥 Запрос на скачивание: ${filename}`);
+    let filename = req.params.filename;
+    console.log('📥 Получен запрос файла:', filename);
     
-    // Скачиваем PDF из S3
+    // Декодируем имя файла из URL
+    filename = decodeURIComponent(filename);
+    console.log('🔧 Декодированное имя:', filename);
+    
+    const targetKey = `С-фактура(PDF)/${filename}`;
+    console.log('🎯 Полный путь в S3:', targetKey);
+    
+    // Проверяем существует ли файл
+    const listResult = await s3.send(new ListObjectsV2Command({
+      Bucket: 'faktura35',
+      Prefix: 'С-фактура(PDF)/'
+    }));
+    
+    const fileExists = listResult.Contents.some(item => item.Key === targetKey);
+    console.log('✅ Файл существует?:', fileExists);
+    
+    if (!fileExists) {
+      return res.status(404).json({ 
+        error: 'Файл не найден',
+        requested: targetKey,
+        availableFiles: listResult.Contents.map(item => item.Key)
+      });
+    }
+    
+    // Скачиваем файл
     const pdfData = await s3.send(new GetObjectCommand({
       Bucket: 'faktura35',
-      Key: `С-фактура(PDF)/${filename}`
+      Key: targetKey
     }));
     
     // Конвертируем поток в Buffer
@@ -99,7 +123,7 @@ app.get('/api/download/:filename', async (req, res) => {
     }
     const pdfBuffer = Buffer.concat(chunks);
     
-    console.log(`✅ Файл ${filename} получен, размер: ${pdfBuffer.length} байт`);
+    console.log(`✅ Файл скачан, размер: ${pdfBuffer.length} байт`);
     
     // Устанавливаем заголовки для скачивания
     res.setHeader('Content-Type', 'application/pdf');
@@ -108,6 +132,7 @@ app.get('/api/download/:filename', async (req, res) => {
     
     // Отправляем файл
     res.send(pdfBuffer);
+    console.log(`📤 Файл отправлен клиенту`);
     
   } catch (error) {
     console.error('❌ Ошибка скачивания:', error);
