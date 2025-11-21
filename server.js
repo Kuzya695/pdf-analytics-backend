@@ -74,6 +74,34 @@ app.get('/api/parse/:filename', async (req, res) => {
   }
 });
 
+// Эндпоинт для скачивания PDF файла
+app.get('/api/download/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    
+    // Скачиваем PDF из S3
+    const pdfData = await s3.getObject({
+      Bucket: 'faktura35',
+      Key: `С-фактура(PDF)/${filename}`
+    });
+    
+    // Получаем данные файла
+    const pdfBuffer = await pdfData.Body.transformToByteArray();
+    
+    // Устанавливаем заголовки для скачивания
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    
+    // Отправляем файл
+    res.send(Buffer.from(pdfBuffer));
+    
+  } catch (error) {
+    console.error('Ошибка скачивания файла:', error);
+    res.status(500).json({ error: 'Ошибка скачивания файла: ' + error.message });
+  }
+});
+
 // Функция извлечения данных из текста PDF
 function extractDataFromText(text, filename) {
   return {
