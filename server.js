@@ -7,13 +7,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Проверяем наличие необходимых переменных окружения
+const accessKeyId = process.env.YANDEX_ACCESS_KEY;
+const secretAccessKey = process.env.YANDEX_SECRET_KEY;
+
+if (!accessKeyId || !secretAccessKey) {
+  console.error('❌ ОШИБКА: Отсутствуют обязательные переменные окружения YANDEX_ACCESS_KEY или YANDEX_SECRET_KEY.');
+  console.error('Пожалуйста, настройте их в панели управления Render.');
+  // Важно: не запускаем сервер, если нет ключей
+  process.exit(1); // Завершаем процесс с ошибкой
+}
+
 // Yandex Cloud S3 клиент
 const s3 = new S3Client({
   endpoint: 'https://storage.yandexcloud.net',
   region: 'ru-central1',
   credentials: {
-    accessKeyId: process.env.YANDEX_ACCESS_KEY,
-    secretAccessKey: process.env.YANDEX_SECRET_KEY
+    accessKeyId: accessKeyId,
+    secretAccessKey: secretAccessKey
   }
 });
 
@@ -41,7 +52,7 @@ app.get('/api/files', async (req, res) => {
 
     res.json({ files: pdfFiles });
   } catch (error) {
-    console.error('Ошибка получения списка файлов:', error);
+    console.error('❌ Ошибка получения списка файлов:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -273,7 +284,7 @@ app.get('/api/parse/:filename', async (req, res) => {
       extractedData: extractedData
     });
   } catch (error) {
-    console.error('Ошибка парсинга PDF:', error);
+    console.error('❌ Ошибка парсинга PDF:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -295,8 +306,12 @@ app.get('/api/download/:filename', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
-});
-
-module.exports = app;
+// Проверяем, что переменные окружения заданы, только потом запускаем сервер
+if (accessKeyId && secretAccessKey) {
+  app.listen(PORT, () => {
+    console.log(`✅ Сервер запущен на порту ${PORT}`);
+  });
+} else {
+  console.error('❌ Не удалось запустить сервер из-за отсутствия ключей.');
+  // Сервер не запускается, процесс завершится с кодом 1 из-за process.exit выше
+}
