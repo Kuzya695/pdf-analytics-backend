@@ -1,213 +1,156 @@
-const express = require('express');
-const cors = require('cors');
-const { S3 } = require('@aws-sdk/client-s3');
-const pdfParse = require('pdf-parse');
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-
-// Yandex Cloud S3 клиент
-const s3 = new S3({
-  endpoint: 'https://storage.yandexcloud.net',
-  region: 'ru-central1',
-  credentials: {
-    accessKeyId: process.env.YANDEX_ACCESS_KEY,
-    secretAccessKey: process.env.YANDEX_SECRET_KEY
-  }
-});
-
-// Тестовый endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'PDF Analytics Backend работает!' });
-});
-
-// Список PDF файлов
-app.get('/api/files', async (req, res) => {
-  try {
-    const result = await s3.listObjectsV2({
-      Bucket: 'faktura35',
-      Prefix: 'С-фактура(PDF)/'
-    });
+// Функция для скачивания отсортированных PDF
+async function downloadSortedPDFs() {
+    if (!isAuthenticated) return;
     
-    const pdfFiles = result.Contents
-      .filter(item => item.Key.endsWith('.pdf'))
-      .map(item => ({
-        name: item.Key.split('/').pop(),
-        key: item.Key,
-        size: item.Size,
-        lastModified: item.LastModified
-      }));
-
-    res.json({ files: pdfFiles });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Парсинг конкретного PDF файла
-app.get('/api/parse/:filename', async (req, res) => {
-  try {
-    const filename = req.params.filename;
-    
-    // Скачиваем PDF из S3
-    const pdfData = await s3.getObject({
-      Bucket: 'faktura35',
-      Key: `С-фактура(PDF)/${filename}`
-    });
-    
-    // Конвертируем Buffer в Uint8Array для pdf-parse
-    const pdfBuffer = await pdfData.Body.transformToByteArray();
-    
-    // Парсим PDF
-    const data = await pdfParse(pdfBuffer);
-    
-    // Извлекаем данные из текста
-    const extractedData = extractDataFromText(data.text, filename);
-    
-    res.json({
-      filename: filename,
-      extractedData: extractedData
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Эндпоинт для скачивания PDF файла
-app.get('/api/download/:filename', async (req, res) => {
-  try {
-    const filename = req.params.filename;
-    
-    // Скачиваем PDF из S3
-    const pdfData = await s3.getObject({
-      Bucket: 'faktura35',
-      Key: `С-фактура(PDF)/${filename}`
-    });
-    
-    // Получаем данные файла
-    const pdfBuffer = await pdfData.Body.transformToByteArray();
-    
-    // Устанавливаем заголовки для скачивания
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    
-    // Отправляем файл
-    res.send(Buffer.from(pdfBuffer));
-    
-  } catch (error) {
-    console.error('Ошибка скачивания файла:', error);
-    res.status(500).json({ error: 'Ошибка скачивания файла: ' + error.message });
-  }
-});
-
-// Функция извлечения данных из текста PDF
-function extractDataFromText(text, filename) {
-  return {
-    date: extractDateFormatted(text),
-    contractor: extractContractor(text),
-    amount: extractAmount(text, filename),
-    incomingNumber: extractIncomingNumber(text),
-    comment: extractComment(text)
-  };
-}
-
-// Вспомогательные функции для парсинга
-function extractDateFormatted(text) {
-  // Ищем дату в формате "16 ноября 2025 г." и конвертируем в "16.11.2025"
-  const match = text.match(/(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
-  if (match) {
-    const months = {
-      'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
-      'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
-      'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
-    };
-    const day = match[1].padStart(2, '0');
-    const month = months[match[2].toLowerCase()];
-    const year = match[3];
-    return `${day}.${month}.${year}`;
-  }
-  
-  // Если не нашли, пробуем из имени файла
-  const filenameMatch = filename.match(/(\d{2})\.(\d{2})\.(\d{2})/);
-  if (filenameMatch) {
-    const day = filenameMatch[1];
-    const month = filenameMatch[2];
-    const year = `20${filenameMatch[3]}`;
-    return `${day}.${month}.${year}`;
-  }
-  
-  return "не найдена";
-}
-
-function extractContractor(text) {
-  // Ищем продавца/поставщика
-  const match = text.match(/Продавец\s+([^\n]+)/);
-  return match ? match[1].trim() : "";
-}
-
-function extractAmount(text, filename) {
-  // Сначала из имени файла
-  const filenameMatch = filename.match(/=\s*([\d.]+)/);
-  if (filenameMatch) return parseFloat(filenameMatch[1]);
-  
-  // Потом из текста PDF
-  const textMatch = text.match(/Всего к оплате[\s\S]*?([\d.,]+)/);
-  if (textMatch) return parseFloat(textMatch[1].replace(',', '.'));
-  
-  return 0;
-}
-
-function extractIncomingNumber(text) {
-  // Ищем номер счета-фактуры в разных форматах
-  const patterns = [
-    /Счет-фактура\s+No?\s*(\d+\/\d+)/,      // "Счет-фактура No 18565/26547"
-    /Счет-фактура\s+No?\s*(\d+)/,           // "Счет-фактура No 58138246"
-    /Счет-фактура\s+№\s*(\d+\/\d+)/,        // с русским №
-    /Счет-фактура\s+№\s*(\d+)/,             // с русским № без слеша
-    /№\s*(\d+\/\d+)\s+от/,                   // "№ 18565/26547 от"
-    /№\s*(\d+)\s+от/,                        // "№ 58138246 от"
-    /документ об отгрузке[^]*?№\s*(\d+\/\d+)/, // в разделе документа об отгрузке
-    /документ об отгрузке[^]*?№\s*(\d+)/,
-    /(\d{5,}\/\d+)/,                         // любой номер с слешем (5+ цифр/цифры)
-    /(\d{6,})/                               // любой длинный номер (6+ цифр)
-  ];
-  
-  for (let pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      console.log(`Найден номер по паттерну: ${match[1]}`);
-      return match[1];
+    if (allInvoices.length === 0) {
+        alert('Нет данных для создания архива');
+        return;
     }
-  }
-  
-  console.log('Номер не найден в тексте');
-  return "не найден";
-}
-
-function extractComment(text) {
-  // Ищем в разных вариантах написания
-  const patterns = [
-    /Счет-Оферта\s+No\s*(\d+)-(\d+)/,  // "Счет-Оферта No 0134086922-0566"
-    /Счет-Оферта\s+№\s*(\d+)-(\d+)/,   // с русским №
-    /Счет-Оферта[^]*?(\d{4})/           // ищем 4 цифры после
-  ];
-  
-  for (let pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      // Возвращаем последние 4 цифры (0566)
-      if (match[2]) return match[2];
-      if (match[1] && match[1].length >= 4) return match[1].slice(-4);
-      if (match[1]) return match[1];
+    
+    try {
+        // Показываем прогресс-бар
+        showProgress();
+        updateProgress(0, 'Подготовка файлов...', 'Начинаем создание архива', '0/0', '0');
+        
+        // Создаем ZIP архив
+        const zip = new JSZip();
+        
+        // Группируем файлы по комментариям
+        const groupedByComment = {};
+        let totalFiles = 0;
+        
+        allInvoices.forEach(invoice => {
+            const comment = invoice.comment || 'Без_комментария';
+            const filename = invoice.filename;
+            
+            if (!groupedByComment[comment]) {
+                groupedByComment[comment] = [];
+            }
+            groupedByComment[comment].push(filename);
+            totalFiles++;
+        });
+        
+        updateProgress(5, 'Группировка файлов...', `Найдено ${totalFiles} файлов в ${Object.keys(groupedByComment).length} категориях`, `0/${totalFiles}`, '0');
+        
+        // Создаем массив промисов для скачивания файлов
+        const downloadPromises = [];
+        let processedFiles = 0;
+        let totalSize = 0;
+        
+        for (const [comment, filenames] of Object.entries(groupedByComment)) {
+            // Создаем папку для комментария (заменяем запрещенные символы)
+            const folderName = comment.replace(/[<>:"/\\|?*]/g, '_');
+            const folder = zip.folder(folderName);
+            
+            for (const filename of filenames) {
+                // Создаем промис для каждого файла
+                const promise = (async (currentFilename, currentFolder) => {
+                    try {
+                        const currentFileNumber = processedFiles + 1;
+                        
+                        // Обновляем прогресс перед скачиванием
+                        updateProgress(
+                            5 + (currentFileNumber / totalFiles) * 85,
+                            `Скачивание файлов...`,
+                            `Файл: ${currentFilename}`,
+                            `${currentFileNumber}/${totalFiles}`,
+                            (totalSize / (1024 * 1024)).toFixed(2)
+                        );
+                        
+                        console.log(`Начинаю скачивание: ${currentFilename}`);
+                        
+                        // Скачиваем PDF файл
+                        const response = await fetch(`${API_BASE}/api/download/${encodeURIComponent(currentFilename)}`);
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        
+                        const blob = await response.blob();
+                        
+                        // Проверяем что файл не пустой
+                        if (blob.size === 0) {
+                            throw new Error('Файл пустой');
+                        }
+                        
+                        // Добавляем файл в папку архива
+                        currentFolder.file(currentFilename, blob);
+                        processedFiles++;
+                        totalSize += blob.size;
+                        
+                        console.log(`✅ Файл ${currentFilename} успешно добавлен в архив (${(blob.size / 1024).toFixed(1)} KB)`);
+                        return { success: true, filename: currentFilename, size: blob.size };
+                        
+                    } catch (error) {
+                        console.error(`❌ Ошибка скачивания ${currentFilename}:`, error);
+                        processedFiles++;
+                        return { success: false, filename: currentFilename, error: error.message };
+                    }
+                })(filename, folder);
+                
+                downloadPromises.push(promise);
+                
+                // Небольшая задержка чтобы не перегружать API (100ms между запросами)
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        // Ждем завершения всех скачиваний
+        updateProgress(90, 'Обработка файлов...', 'Ожидаем завершения загрузки...', `${processedFiles}/${totalFiles}`, (totalSize / (1024 * 1024)).toFixed(2));
+        
+        console.log(`Ожидаем завершения ${downloadPromises.length} промисов...`);
+        const results = await Promise.all(downloadPromises);
+        
+        // Проверяем результаты
+        const successfulDownloads = results.filter(r => r.success).length;
+        const failedDownloads = results.filter(r => !r.success).length;
+        
+        console.log(`📊 Итоги скачивания: Успешно: ${successfulDownloads}, Ошибок: ${failedDownloads}`);
+        
+        // Выводим детальную информацию об ошибках
+        if (failedDownloads > 0) {
+            const failedFiles = results.filter(r => !r.success).map(r => `${r.filename}: ${r.error}`);
+            console.log('❌ Ошибки скачивания:', failedFiles);
+        }
+        
+        if (successfulDownloads === 0) {
+            hideProgress();
+            alert('❌ Не удалось скачать ни одного файла. Проверьте:\n1. Доступность сервера\n2. Наличие эндпоинта /api/download/\n3. Консоль браузера для деталей ошибок');
+            return;
+        }
+        
+        // Генерируем архив
+        updateProgress(95, 'Создание архива...', 'Формируем ZIP файл', `${successfulDownloads}/${totalFiles}`, (totalSize / (1024 * 1024)).toFixed(2));
+        
+        console.log('Начинаем генерацию ZIP архива...');
+        const content = await zip.generateAsync({ 
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 }
+        });
+        
+        // Скачиваем архив
+        updateProgress(100, 'Завершено!', 'Архив готов к скачиванию', `${successfulDownloads}/${totalFiles}`, (content.size / (1024 * 1024)).toFixed(2));
+        
+        const currentDate = new Date().toISOString().split('T')[0];
+        const archiveName = `счета-фактуры_по-комментариям_${currentDate}.zip`;
+        
+        console.log(`Скачиваем архив: ${archiveName}, размер: ${(content.size / 1024 / 1024).toFixed(2)} MB`);
+        saveAs(content, archiveName);
+        
+        // Показываем итоговое сообщение
+        setTimeout(() => {
+            hideProgress();
+            if (failedDownloads > 0) {
+                alert(`✅ Архив создан! Успешно: ${successfulDownloads} файлов, Ошибок: ${failedDownloads}\n\nПроверьте консоль браузера для деталей ошибок.`);
+            } else {
+                alert(`✅ Архив успешно создан! Все ${successfulDownloads} файлов добавлены.\nРазмер архива: ${(content.size / 1024 / 1024).toFixed(2)} MB`);
+            }
+        }, 1000);
+        
+    } catch (error) {
+        console.error('❌ Критическая ошибка при создании архива:', error);
+        hideProgress();
+        alert('❌ Ошибка при создании архива: ' + error.message + '\n\nПроверьте консоль браузера для деталей.');
     }
-  }
-  
-  return "";
 }
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
-});
