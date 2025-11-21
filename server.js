@@ -80,63 +80,21 @@ app.get('/api/parse/:filename', async (req, res) => {
   }
 });
 
-// Эндпоинт для скачивания PDF файла - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// Эндпоинт для скачивания PDF файла - РЕДИРЕКТ НА S3
 app.get('/api/download/:filename', async (req, res) => {
   try {
-    let filename = req.params.filename;
-    console.log('📥 Получен запрос файла:', filename);
+    const filename = decodeURIComponent(req.params.filename);
+    console.log('📥 Запрос на скачивание:', filename);
     
-    // Декодируем имя файла из URL
-    filename = decodeURIComponent(filename);
-    console.log('🔧 Декодированное имя:', filename);
+    // Редирект на прямую ссылку S3
+    const directUrl = `https://storage.yandexcloud.net/faktura35/С-фактура(PDF)/${encodeURIComponent(filename)}`;
+    console.log('🔗 Редирект на:', directUrl);
     
-    const targetKey = `С-фактура(PDF)/${filename}`;
-    console.log('🎯 Полный путь в S3:', targetKey);
-    
-    // Проверяем существует ли файл
-    const listResult = await s3.send(new ListObjectsV2Command({
-      Bucket: 'faktura35',
-      Prefix: 'С-фактура(PDF)/'
-    }));
-    
-    const fileExists = listResult.Contents.some(item => item.Key === targetKey);
-    console.log('✅ Файл существует?:', fileExists);
-    
-    if (!fileExists) {
-      return res.status(404).json({ 
-        error: 'Файл не найден',
-        requested: targetKey,
-        availableFiles: listResult.Contents.map(item => item.Key)
-      });
-    }
-    
-    // Скачиваем файл
-    const pdfData = await s3.send(new GetObjectCommand({
-      Bucket: 'faktura35',
-      Key: targetKey
-    }));
-    
-    // Конвертируем поток в Buffer
-    const chunks = [];
-    for await (const chunk of pdfData.Body) {
-      chunks.push(chunk);
-    }
-    const pdfBuffer = Buffer.concat(chunks);
-    
-    console.log(`✅ Файл скачан, размер: ${pdfBuffer.length} байт`);
-    
-    // Устанавливаем заголовки для скачивания
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    
-    // Отправляем файл
-    res.send(pdfBuffer);
-    console.log(`📤 Файл отправлен клиенту`);
+    res.redirect(directUrl);
     
   } catch (error) {
-    console.error('❌ Ошибка скачивания:', error);
-    res.status(500).json({ error: 'Ошибка скачивания: ' + error.message });
+    console.error('❌ Ошибка:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
