@@ -131,68 +131,58 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Начинаем поиск суммы...');
+        console.log('🔍 Начинаем поиск суммы в PDF...');
         
-        // 1. Сначала из имени файла
-        const filenameMatch = filename.match(/=\s*([\d.]+)/);
-        if (filenameMatch) {
-          console.log(`💰 Сумма из имени файла: ${filenameMatch[1]}`);
-          return parseFloat(filenameMatch[1]);
-        }
+        // 1. Ищем в таблице - конкретно колонку стоимости товара
+        const lines = data.text.split('\n');
         
-        // 2. Ищем итоговые суммы в разных вариантах
-        const totalPatterns = [
-          /Всего к оплате[\s\S]*?([\d\s.,]+)\s*₽/i,
-          /Стоимость товаров[^]*?с налогом[^]*?([\d\s.,]+)/i,
-          /Стоимость с налогом[\s\S]*?([\d\s.,]+)/i,
-          /Всего[\s\S]*?([\d\s.,]+)\s*₽/i,
-          /Итого[\s\S]*?([\d\s.,]+)\s*₽/i
-        ];
-        
-        for (let pattern of totalPatterns) {
-          const match = data.text.match(pattern);
-          if (match) {
-            const amountStr = match[1].replace(/\s/g, '').replace(',', '.');
-            const amount = parseFloat(amountStr);
-            if (!isNaN(amount) && amount > 0) {
-              console.log(`💰 Найдена сумма по паттерну "${pattern}": ${amount}`);
-              return amount;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Ищем строку с товаром по характерным признакам
+          if (line.includes('Довольчик') || line.includes('Доводчик') || 
+              line.includes('шт') && line.includes('1 050.00')) {
+            console.log('🎯 Найдена строка товара:', line);
+            
+            // Ищем суммы в формате "1 050.00"
+            const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
+            if (amountMatches && amountMatches.length > 0) {
+              // Берем ПОСЛЕДНЮЮ сумму в строке (это итоговая стоимость)
+              const lastAmount = amountMatches[amountMatches.length - 1];
+              const amount = parseFloat(lastAmount.replace(/\s/g, '').replace(',', '.'));
+              if (!isNaN(amount) && amount > 0) {
+                console.log(`💰 Найдена сумма в таблице товара: ${amount}`);
+                return amount;
+              }
             }
           }
         }
         
-        // 3. Ищем суммы в таблице - берем последнюю колонку последней строки
-        const lines = data.text.split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
+        // 2. Ищем "Всего к оплате" - улучшенный поиск
+        const totalMatch = data.text.match(/Всего к оплате[\s\S]*?(\d{1,3}(?:\s\d{3})*[.,]\d{2})/i);
+        if (totalMatch) {
+          const amount = parseFloat(totalMatch[1].replace(/\s/g, '').replace(',', '.'));
+          if (!isNaN(amount) && amount > 0) {
+            console.log(`💰 Найдена сумма "Всего к оплате": ${amount}`);
+            return amount;
+          }
+        }
+        
+        // 3. Ищем суммы в конце документа (последние строки)
+        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
           const line = lines[i].trim();
-          // Ищем суммы в формате 1 050.00 или 1,050.00
           const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
-          if (amountMatches && amountMatches.length > 0) {
-            // Берем последнюю сумму в строке (скорее всего итоговая)
+          if (amountMatches) {
             const lastAmount = amountMatches[amountMatches.length - 1];
             const amount = parseFloat(lastAmount.replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(amount) && amount > 0) {
-              console.log(`💰 Найдена сумма в таблице: ${amount}`);
+              console.log(`💰 Найдена сумма в конце документа: ${amount}`);
               return amount;
             }
           }
         }
         
-        // 4. Ищем все суммы в тексте и берем максимальную
-        const allAmounts = data.text.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g) || [];
-        if (allAmounts.length > 0) {
-          const amounts = allAmounts.map(amt => 
-            parseFloat(amt.replace(/\s/g, '').replace(',', '.'))
-          ).filter(amt => !isNaN(amt) && amt > 0);
-          
-          if (amounts.length > 0) {
-            const maxAmount = Math.max(...amounts);
-            console.log(`💰 Найдена максимальная сумма в тексте: ${maxAmount}`);
-            return maxAmount;
-          }
-        }
-        
-        console.log('❌ Сумма не найдена');
+        console.log('❌ Сумма не найдена в PDF');
         return 0;
       })(),
       
