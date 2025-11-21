@@ -131,58 +131,34 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Начинаем поиск суммы в PDF...');
+        console.log('🔍 Поиск суммы "Всего к оплате" в строке товара...');
         
-        // 1. Ищем в таблице - конкретно колонку стоимости товара
         const lines = data.text.split('\n');
         
+        // Ищем строку с товаром
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
-          // Ищем строку с товаром по характерным признакам
-          if (line.includes('Довольчик') || line.includes('Доводчик') || 
-              line.includes('шт') && line.includes('1 050.00')) {
+          // Строка товара: содержит "шт" и числа
+          if (line.includes('шт') && line.match(/\d{1,3}(?:\s\d{3})*[.,]\d{2}/)) {
             console.log('🎯 Найдена строка товара:', line);
             
-            // Ищем суммы в формате "1 050.00"
+            // Ищем ВСЕ суммы в строке
             const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
             if (amountMatches && amountMatches.length > 0) {
-              // Берем ПОСЛЕДНЮЮ сумму в строке (это итоговая стоимость)
-              const lastAmount = amountMatches[amountMatches.length - 1];
-              const amount = parseFloat(lastAmount.replace(/\s/g, '').replace(',', '.'));
+              // Берем ПОСЛЕДНЮЮ сумму - это "Всего к оплате"
+              const totalAmount = amountMatches[amountMatches.length - 1];
+              const amount = parseFloat(totalAmount.replace(/\s/g, '').replace(',', '.'));
+              
               if (!isNaN(amount) && amount > 0) {
-                console.log(`💰 Найдена сумма в таблице товара: ${amount}`);
+                console.log(`💰 Всего к оплате: ${amount}`);
                 return amount;
               }
             }
           }
         }
         
-        // 2. Ищем "Всего к оплате" - улучшенный поиск
-        const totalMatch = data.text.match(/Всего к оплате[\s\S]*?(\d{1,3}(?:\s\d{3})*[.,]\d{2})/i);
-        if (totalMatch) {
-          const amount = parseFloat(totalMatch[1].replace(/\s/g, '').replace(',', '.'));
-          if (!isNaN(amount) && amount > 0) {
-            console.log(`💰 Найдена сумма "Всего к оплате": ${amount}`);
-            return amount;
-          }
-        }
-        
-        // 3. Ищем суммы в конце документа (последние строки)
-        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
-          const line = lines[i].trim();
-          const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
-          if (amountMatches) {
-            const lastAmount = amountMatches[amountMatches.length - 1];
-            const amount = parseFloat(lastAmount.replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(amount) && amount > 0) {
-              console.log(`💰 Найдена сумма в конце документа: ${amount}`);
-              return amount;
-            }
-          }
-        }
-        
-        console.log('❌ Сумма не найдена в PDF');
+        console.log('❌ Сумма не найдена');
         return 0;
       })(),
       
