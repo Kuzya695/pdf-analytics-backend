@@ -84,7 +84,7 @@ app.get('/api/parse/:filename', async (req, res) => {
 app.get('/api/download/:filename', async (req, res) => {
   try {
     const filename = req.params.filename;
-    console.log(`📥 Запрос на скачивание файла: ${filename}`);
+    console.log(`📥 Запрос на скачивание: ${filename}`);
     
     // Скачиваем PDF из S3
     const pdfData = await s3.send(new GetObjectCommand({
@@ -99,7 +99,7 @@ app.get('/api/download/:filename', async (req, res) => {
     }
     const pdfBuffer = Buffer.concat(chunks);
     
-    console.log(`✅ Файл ${filename} успешно получен из S3, размер: ${pdfBuffer.length} байт`);
+    console.log(`✅ Файл ${filename} получен, размер: ${pdfBuffer.length} байт`);
     
     // Устанавливаем заголовки для скачивания
     res.setHeader('Content-Type', 'application/pdf');
@@ -108,11 +108,10 @@ app.get('/api/download/:filename', async (req, res) => {
     
     // Отправляем файл
     res.send(pdfBuffer);
-    console.log(`📤 Файл ${filename} отправлен клиенту`);
     
   } catch (error) {
-    console.error('❌ Ошибка скачивания файла:', error);
-    res.status(500).json({ error: 'Ошибка скачивания файла: ' + error.message });
+    console.error('❌ Ошибка скачивания:', error);
+    res.status(500).json({ error: 'Ошибка скачивания: ' + error.message });
   }
 });
 
