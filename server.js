@@ -31,7 +31,7 @@ app.get('/api/files', async (req, res) => {
     }));
     
     const pdfFiles = result.Contents
-      .filter(item => item.Key.endsWith('.pdf'))
+      .filter(item => item.Key && item.Key.endsWith('.pdf'))
       .map(item => ({
         name: item.Key.split('/').pop(),
         key: item.Key,
