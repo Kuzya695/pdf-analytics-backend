@@ -1,3 +1,51 @@
+const express = require('express');
+const cors = require('cors');
+const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const pdfParse = require('pdf-parse');
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+// Yandex Cloud S3 клиент
+const s3 = new S3Client({
+  endpoint: 'https://storage.yandexcloud.net',
+  region: 'ru-central1',
+  credentials: {
+    accessKeyId: process.env.YANDEX_ACCESS_KEY,
+    secretAccessKey: process.env.YANDEX_SECRET_KEY
+  }
+});
+
+// Тестовый endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'PDF Analytics Backend работает!' });
+});
+
+// Список PDF файлов
+app.get('/api/files', async (req, res) => {
+  try {
+    const result = await s3.send(new ListObjectsV2Command({
+      Bucket: 'faktura35',
+      Prefix: 'С-фактура(PDF)/'
+    }));
+    
+    const pdfFiles = result.Contents
+      .filter(item => item.Key && item.Key.endsWith('.pdf'))
+      .map(item => ({
+        name: item.Key.split('/').pop(),
+        key: item.Key,
+        size: item.Size,
+        lastModified: item.LastModified
+      }));
+
+    res.json({ files: pdfFiles });
+  } catch (error) {
+    console.error('Ошибка получения списка файлов:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // УЛУЧШЕННОЕ извлечение суммы
 function extractAmount(text, filename) {
   console.log('🔍 Начинаем поиск суммы...');
@@ -61,7 +109,7 @@ function extractAmount(text, filename) {
       // Логика выбора правильной суммы:
       if (numbers.length >= 2) {
         // В таблице обычно: цена | количество | стоимость
-        // Стоимость = цена * количество
+        // Стоимость = цена × количество
         // Ищем пару чисел, где одно делится на другое без остатка
         for (let j = 0; j < numbers.length; j++) {
           for (let k = j + 1; k < numbers.length; k++) {
@@ -267,3 +315,96 @@ function extractComment(text, filename) {
   
   return "";
 }
+
+// Улучшенный рендерер текста
+function textRenderer(pageData) {
+  return pageData.getTextContent().then(function(textContent) {
+    let lastY, text = '';
+    for (let item of textContent.items) {
+      if (lastY == item.transform[5] || !lastY) {
+        text += item.str;
+      } else {
+        text += '\n' + item.str;
+      }
+      lastY = item.transform[5];
+    }
+    return text;
+  });
+}
+
+// Улучшенная функция извлечения данных
+function extractInvoiceData(text, filename) {
+  const data = {
+    date: extractDate(text, filename),
+    contractor: extractContractor(text),
+    amount: extractAmount(text, filename),
+    incomingNumber: extractInvoiceNumber(text),
+    comment: extractComment(text, filename)
+  };
+  
+  return data;
+}
+
+// Парсинг конкретного PDF файла - УЛУЧШЕННАЯ ВЕРСИЯ
+app.get('/api/parse/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    
+    // Скачиваем PDF из S3
+    const pdfData = await s3.send(new GetObjectCommand({
+      Bucket: 'faktura35',
+      Key: `С-фактура(PDF)/${filename}`
+    }));
+    
+    // Конвертируем поток в Buffer
+    const chunks = [];
+    for await (const chunk of pdfData.Body) {
+      chunks.push(chunk);
+    }
+    const pdfBuffer = Buffer.concat(chunks);
+    
+    // Парсим PDF с улучшенными настройками
+    const data = await pdfParse(pdfBuffer, {
+      pagerender: textRenderer,
+      max: 0 // Обрабатываем все страницы
+    });
+    
+    console.log('📄 Текст PDF:', data.text.substring(0, 500) + '...');
+    
+    // Извлекаем данные из текста
+    const extractedData = extractInvoiceData(data.text, filename);
+    
+    console.log('📊 Извлеченные данные:', extractedData);
+    
+    res.json({
+      filename: filename,
+      extractedData: extractedData
+    });
+  } catch (error) {
+    console.error('Ошибка парсинга PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Эндпоинт для скачивания PDF файла - РЕДИРЕКТ НА S3
+app.get('/api/download/:filename', async (req, res) => {
+  try {
+    const filename = decodeURIComponent(req.params.filename);
+    console.log('📥 Запрос на скачивание:', filename);
+    
+    // Редирект на прямую ссылку S3
+    const directUrl = `https://storage.yandexcloud.net/faktura35/С-фактура(PDF)/${encodeURIComponent(filename)}`;
+    console.log('🔗 Редирект на:', directUrl);
+    
+    res.redirect(directUrl);
+    
+  } catch (error) {
+    console.error('❌ Ошибка:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Сервер запущен на порту ${PORT}`);
+});
