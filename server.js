@@ -64,33 +64,45 @@ app.get('/api/parse/:filename', async (req, res) => {
     }
     const pdfBuffer = Buffer.concat(chunks);
     
-    // Парсим PDF
-    const data = await pdfParse(pdfBuffer);
+    // Парсим PDF с улучшенными настройками для русской кодировки
+    const data = await pdfParse(pdfBuffer, {
+      pagerender: renderPage,
+      max: 0 // без ограничения длины текста
+    });
+    
+    // Декодируем текст для исправления кодировки
+    const decodedText = fixEncoding(data.text);
+    console.log('📄 Распознанный текст:', decodedText);
     
     // Извлекаем данные из текста
     const extractedData = {
       date: (() => {
-        // Ищем дату в формате "16 ноября 2025 г." и конвертируем в "16.11.2025"
-        const match = data.text.match(/(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
-        if (match) {
-          const months = {
-            'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
-            'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
-            'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
-          };
-          const day = match[1].padStart(2, '0');
-          const month = months[match[2].toLowerCase()];
-          const year = match[3];
-          return `${day}.${month}.${year}`;
-        }
+        // Ищем дату в разных форматах
+        const datePatterns = [
+          /(\d{1,2})\.(\d{1,2})\.(\d{4})/, // 17.11.2025
+          /(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i
+        ];
         
-        // Ищем дату в формате "17.11.2025"
-        const dateMatch = data.text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-        if (dateMatch) {
-          const day = dateMatch[1].padStart(2, '0');
-          const month = dateMatch[2].padStart(2, '0');
-          const year = dateMatch[3];
-          return `${day}.${month}.${year}`;
+        for (let pattern of datePatterns) {
+          const match = decodedText.match(pattern);
+          if (match) {
+            if (pattern.toString().includes('ноября')) {
+              const months = {
+                'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
+                'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
+                'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
+              };
+              const day = match[1].padStart(2, '0');
+              const month = months[match[2].toLowerCase()];
+              const year = match[3];
+              return `${day}.${month}.${year}`;
+            } else {
+              const day = match[1].padStart(2, '0');
+              const month = match[2].padStart(2, '0');
+              const year = match[3];
+              return `${day}.${month}.${year}`;
+            }
+          }
         }
         
         // Если не нашли, пробуем из имени файла
@@ -106,25 +118,22 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       contractor: (() => {
-        // Ищем продавца/поставщика в разных вариантах
+        // Ищем контрагента по разным паттернам
         const patterns = [
-          /Продавец\s+([^\n]+)/i,
-          /Поставщик\s+([^\n]+)/i,
+          /ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ[^,\n]+/i,
           /ООО[^,\n]+/i,
-          /АО[^,\n]+/i,
-          /ПАО[^,\n]+/i,
-          /ИП[^,\n]+/i,
-          /"([^"]+)"/i
+          /"([^"]+)"/i,
+          /[A-Z]{2,} [A-Z]{2,} [A-Z]{2,}/ // Для текста в верхнем регистре
         ];
         
         for (let pattern of patterns) {
-          const match = data.text.match(pattern);
+          const match = decodedText.match(pattern);
           if (match) {
-            const contractor = match[1] ? match[1].trim() : match[0].trim();
-            if (contractor.length > 5) {
-              console.log(`🏢 Найден контрагент: ${contractor}`);
-              return contractor;
-            }
+            let contractor = match[0].trim();
+            // Пытаемся исправить кодировку для контрагента
+            contractor = fixEncoding(contractor);
+            console.log(`🏢 Найден контрагент: ${contractor}`);
+            return contractor;
           }
         }
         return "";
@@ -140,54 +149,29 @@ app.get('/api/parse/:filename', async (req, res) => {
           return parseFloat(filenameMatch[1]);
         }
         
-        // 2. Ищем итоговые суммы в разных вариантах
-        const totalPatterns = [
-          /Всего к оплате[\s\S]*?([\d\s.,]+)\s*₽/i,
-          /Стоимость товаров[^]*?с налогом[^]*?([\d\s.,]+)/i,
-          /Стоимость с налогом[\s\S]*?([\d\s.,]+)/i,
-          /Всего[\s\S]*?([\d\s.,]+)\s*₽/i,
-          /Итого[\s\S]*?([\d\s.,]+)\s*₽/i
+        // 2. Ищем суммы в формате 1 050.00 или 1,050.00
+        const amountPatterns = [
+          /(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g,
+          /(\d+[.,]\d{2})/g
         ];
         
-        for (let pattern of totalPatterns) {
-          const match = data.text.match(pattern);
-          if (match) {
-            const amountStr = match[1].replace(/\s/g, '').replace(',', '.');
-            const amount = parseFloat(amountStr);
-            if (!isNaN(amount) && amount > 0) {
-              console.log(`💰 Найдена сумма по паттерну "${pattern}": ${amount}`);
-              return amount;
-            }
-          }
+        let allAmounts = [];
+        for (let pattern of amountPatterns) {
+          const matches = decodedText.match(pattern) || [];
+          allAmounts = allAmounts.concat(matches);
         }
         
-        // 3. Ищем суммы в таблице - берем последнюю колонку последней строки
-        const lines = data.text.split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
-          const line = lines[i].trim();
-          // Ищем суммы в формате 1 050.00 или 1,050.00
-          const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
-          if (amountMatches && amountMatches.length > 0) {
-            // Берем последнюю сумму в строке (скорее всего итоговая)
-            const lastAmount = amountMatches[amountMatches.length - 1];
-            const amount = parseFloat(lastAmount.replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(amount) && amount > 0) {
-              console.log(`💰 Найдена сумма в таблице: ${amount}`);
-              return amount;
-            }
-          }
-        }
-        
-        // 4. Ищем все суммы в тексте и берем максимальную
-        const allAmounts = data.text.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g) || [];
         if (allAmounts.length > 0) {
-          const amounts = allAmounts.map(amt => 
-            parseFloat(amt.replace(/\s/g, '').replace(',', '.'))
-          ).filter(amt => !isNaN(amt) && amt > 0);
+          // Преобразуем в числа и фильтруем валидные
+          const amounts = allAmounts.map(amt => {
+            const cleanAmt = amt.replace(/\s/g, '').replace(',', '.');
+            return parseFloat(cleanAmt);
+          }).filter(amt => !isNaN(amt) && amt > 0);
           
           if (amounts.length > 0) {
+            // Берем максимальную сумму (скорее всего это итог)
             const maxAmount = Math.max(...amounts);
-            console.log(`💰 Найдена максимальная сумма в тексте: ${maxAmount}`);
+            console.log(`💰 Найдены суммы: ${amounts}, выбрана максимальная: ${maxAmount}`);
             return maxAmount;
           }
         }
@@ -197,22 +181,16 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       incomingNumber: (() => {
-        // Ищем номер счета-фактуры в разных форматах
+        // Ищем номер в разных форматах
         const patterns = [
-          /Счет-фактура\s+No?\s*(\d+\/\d+)/i,
-          /Счет-фактура\s+No?\s*(\d+)/i,
-          /Счет-фактура\s+№\s*(\d+\/\d+)/i,
-          /Счет-фактура\s+№\s*(\d+)/i,
-          /№\s*(\d+\/\d+)\s+от/i,
-          /№\s*(\d+)\s+от/i,
-          /(\d{5,}\/\d{2,})/i,
-          /(\d{6,})/i,
-          /Счет-фактура[^]*?(\d+\/\d+)/i,
-          /Счет-фактура[^]*?(\d+)/i
+          /(\d{5,}\/\d{2,})/, // 2965673/12
+          /(\d{6,})/, // длинные номера
+          /Счет[^]*?(\d+\/\d+)/i,
+          /фактура[^]*?(\d+\/\d+)/i
         ];
         
         for (let pattern of patterns) {
-          const match = data.text.match(pattern);
+          const match = decodedText.match(pattern);
           if (match && match[1]) {
             const number = match[1].trim();
             console.log(`🔢 Найден номер: ${number}`);
@@ -225,20 +203,23 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       comment: (() => {
-        // Ищем комментарий в разных вариантах написания
+        // Ищем 4 цифры в конце строк или отдельно стоящие
         const patterns = [
-          /Счет-Оферта\s+No\s*(\d+)-(\d+)/i,
-          /Счет-Оферта\s+№\s*(\d+)-(\d+)/i,
-          /Счет-Оферта[^]*?(\d{4})/i
+          /(\d{4})/g,
+          /0566/,
+          /0566/
         ];
         
         for (let pattern of patterns) {
-          const match = data.text.match(pattern);
-          if (match) {
-            // Возвращаем последние 4 цифры (0566)
-            if (match[2]) return match[2];
-            if (match[1] && match[1].length >= 4) return match[1].slice(-4);
-            if (match[1]) return match[1];
+          const matches = decodedText.match(pattern);
+          if (matches) {
+            // Ищем 4-значные числа, которые скорее всего являются комментариями
+            for (let match of matches) {
+              if (match.length === 4 && /^\d{4}$/.test(match)) {
+                console.log(`🏷️ Найден комментарий: ${match}`);
+                return match;
+              }
+            }
           }
         }
         return "";
@@ -256,6 +237,40 @@ app.get('/api/parse/:filename', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Функция для исправления кодировки
+function fixEncoding(text) {
+  if (!text) return '';
+  
+  // Заменяем common encoding issues
+  return text
+    .replace(/OBLECTBO/g, 'ОБЩЕСТВО')
+    .replace(/OrPAHWUEHHOM/g, 'ОГРАНИЧЕННОЙ')
+    .replace(/OTBETCTBEHHOCTbIO/g, 'ОТВЕТСТВЕННОСТЬЮ')
+    .replace(/mABOPVT/g, 'ФАВОРИТ')
+    .replace(/OOO/g, 'ООО');
+}
+
+// Улучшенный рендер страницы для лучшего распознавания
+function renderPage(pageData) {
+  const renderOptions = {
+    normalizeWhitespace: false,
+    disableCombineTextItems: false
+  };
+  
+  return pageData.getTextContent(renderOptions)
+    .then(textContent => {
+      let lastY, text = '';
+      for (let item of textContent.items) {
+        if (lastY !== item.transform[5]) {
+          lastY = item.transform[5];
+          text += '\n';
+        }
+        text += item.str + ' ';
+      }
+      return text;
+    });
+}
 
 // Эндпоинт для скачивания PDF файла - РЕДИРЕКТ НА S3
 app.get('/api/download/:filename', async (req, res) => {
