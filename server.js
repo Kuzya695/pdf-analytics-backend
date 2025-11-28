@@ -123,46 +123,49 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Точный поиск итоговой суммы...');
+        console.log('🔍 Упрощенный поиск суммы...');
         const lines = data.text.split('\n');
         
-        // Ищем конкретно итоговую строку таблицы
+        // Простой поиск: ищем "Всего к оплате" и берем первое число после него
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
-          // Ищем строку, которая содержит "Всего к оплате" и числа 243.33, 48.67, 292.00
           if (line.includes('Всего к оплате')) {
-            console.log('🎯 Найдена строка "Всего к оплате":', line);
+            console.log('🎯 Найдена строка "Всего к оплате"');
             
-            // Ищем ВСЕ числа в этой и следующих 2 строках
-            const searchLines = [line, lines[i+1] || '', lines[i+2] || ''];
-            const allNumbers = [];
-            
-            searchLines.forEach((searchLine, index) => {
-              const numbers = searchLine.match(/(\d+[.,]\d{2})/g);
+            // Ищем числа в этой и следующих 5 строках
+            for (let j = i; j < Math.min(i + 6, lines.length); j++) {
+              const numbers = lines[j].match(/(\d+[.,]\d{2})/g);
               if (numbers) {
-                numbers.forEach(num => {
-                  const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
-                  if (!isNaN(amount)) {
-                    allNumbers.push({amount, line: i + index, original: num});
-                  }
-                });
+                // Берем первое найденное число
+                const amount = parseFloat(numbers[0].replace(',', '.').replace(/\s/g, ''));
+                if (!isNaN(amount) && amount > 10) {
+                  console.log(`💰 Найдена сумма: ${amount}`);
+                  return amount;
+                }
               }
-            });
-            
-            console.log('📊 Все найденные числа вокруг "Всего к оплате":', allNumbers);
-            
-            // В итоговой строке должно быть 3 числа: 243.33, 48.67, 292.00
-            // Нам нужно последнее - 292.00
-            if (allNumbers.length >= 3) {
-              const finalAmount = allNumbers[allNumbers.length - 1].amount;
-              console.log(`💰 Итоговая сумма с НДС: ${finalAmount}`);
-              return finalAmount;
             }
           }
         }
         
-        console.log('❌ Итоговая сумма не найдена');
+        // Если не нашли, ищем самую большую сумму в документе
+        console.log('🔍 Резервный поиск самой большой суммы...');
+        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
+        let maxAmount = 0;
+        
+        allNumbers.forEach(num => {
+          const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
+          if (!isNaN(amount) && amount > maxAmount && amount < 100000) {
+            maxAmount = amount;
+          }
+        });
+        
+        if (maxAmount > 0) {
+          console.log(`💰 Самая большая сумма: ${maxAmount}`);
+          return maxAmount;
+        }
+        
+        console.log('❌ Сумма не найдена');
         return 0;
       })(),
       
