@@ -136,55 +136,55 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск суммы в PDF...');
+        console.log('🔍 Поиск суммы в столбце 9...');
         
         const lines = data.text.split('\n');
-        
-        // ВАРИАНТ 1: Ищем строку "Всего к оплате" (разные варианты написания)
-        const totalPatterns = [
-          'Всего к оплате',
-          'Всего к оплате',
-          'Всего',
-          'Итого',
-          'К оплате'
-        ];
-        
-        for (let pattern of totalPatterns) {
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(pattern)) {
-              console.log(`🎯 Найдена строка с "${pattern}":`, lines[i]);
-              
-              // Ищем числа в этой строке и следующих 2 строках
-              for (let j = i; j < Math.min(i + 3, lines.length); j++) {
-                const currentLine = lines[j].trim();
-                const numbers = currentLine.match(/(\d+[.,]\d{2})/g);
-                
-                if (numbers && numbers.length > 0) {
-                  // Берем ПОСЛЕДНЕЕ число
-                  const lastNumber = numbers[numbers.length - 1];
-                  const amount = parseFloat(lastNumber.replace(',', '.'));
-                  
-                  if (!isNaN(amount) && amount > 0) {
-                    console.log(`💰 Найдена сумма: ${amount}`);
-                    return amount;
-                  }
+        let foundColumn9 = false;
+        let amounts = [];
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Ищем начало столбца с идентификатором 9
+          if (line.includes('9') && !foundColumn9) {
+            // Проверяем контекст - это должен быть заголовок таблицы
+            const prevLines = lines.slice(Math.max(0, i-2), i+3).join(' ');
+            if (prevLines.includes('Стоимость') && prevLines.includes('с налогом')) {
+              console.log('🎯 Найден столбец 9 с заголовком стоимости с налогом');
+              foundColumn9 = true;
+              continue;
+            }
+          }
+          
+          // После нахождения столбца 9, ищем числа в этом столбце
+          if (foundColumn9) {
+            // Ищем числа в формате XXX.XX в текущей строке
+            const numbers = line.match(/(\d+[.,]\d{2})/g);
+            if (numbers) {
+              numbers.forEach(num => {
+                const amount = parseFloat(num.replace(',', '.'));
+                if (!isNaN(amount) && amount > 0) {
+                  amounts.push(amount);
+                  console.log(`💰 Найдена сумма в столбце 9: ${amount}`);
                 }
-              }
+              });
+            }
+            
+            // Если нашли пустую строку или конец таблицы, выходим
+            if (line === '' && amounts.length > 0) {
+              break;
             }
           }
         }
         
-        // ВАРИАНТ 2: Ищем самую большую сумму в документе
-        console.log('🔍 Поиск самой большой суммы...');
-        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
-        if (allNumbers.length > 0) {
-          const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')));
-          const maxAmount = Math.max(...amounts);
-          console.log(`💰 Самая большая сумма: ${maxAmount}`);
-          return maxAmount;
+        // Берем последнюю сумму из столбца 9 (итоговая)
+        if (amounts.length > 0) {
+          const finalAmount = amounts[amounts.length - 1];
+          console.log(`🎯 Итоговая сумма из столбца 9: ${finalAmount}`);
+          return finalAmount;
         }
         
-        console.log('❌ Сумма не найдена');
+        console.log('❌ Сумма в столбце 9 не найдена');
         return 0;
       })(),
       
