@@ -7,7 +7,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Yandex Cloud S3 клиент
 const s3 = new S3Client({
   endpoint: 'https://storage.yandexcloud.net',
   region: 'ru-central1',
@@ -17,12 +16,10 @@ const s3 = new S3Client({
   }
 });
 
-// Тестовый endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'PDF Analytics Backend работает!' });
 });
 
-// Список PDF файлов
 app.get('/api/files', async (req, res) => {
   try {
     const result = await s3.send(new ListObjectsV2Command({
@@ -46,36 +43,29 @@ app.get('/api/files', async (req, res) => {
   }
 });
 
-// Парсинг конкретного PDF файла
 app.get('/api/parse/:filename', async (req, res) => {
   try {
     const filename = req.params.filename;
     
-    // Скачиваем PDF из S3
     const pdfData = await s3.send(new GetObjectCommand({
       Bucket: 'faktura35',
       Key: `С-фактура(PDF)/${filename}`
     }));
     
-    // Конвертируем поток в Buffer
     const chunks = [];
     for await (const chunk of pdfData.Body) {
       chunks.push(chunk);
     }
     const pdfBuffer = Buffer.concat(chunks);
     
-    // Парсим PDF
     const data = await pdfParse(pdfBuffer);
     
-    // ДЛЯ ОТЛАДКИ: выводим весь текст PDF
     console.log('=== ВЕСЬ ТЕКСТ PDF ===');
     console.log(data.text);
     console.log('=== КОНЕЦ ТЕКСТА PDF ===');
     
-    // Извлекаем данные из текста
     const extractedData = {
       date: (() => {
-        // Ищем дату в формате "16 ноября 2025 г." и конвертируем в "16.11.2025"
         const match = data.text.match(/(\d{1,2})\s+(ноября|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
         if (match) {
           const months = {
@@ -89,7 +79,6 @@ app.get('/api/parse/:filename', async (req, res) => {
           return `${day}.${month}.${year}`;
         }
         
-        // Ищем дату в формате "17.11.2025"
         const dateMatch = data.text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
         if (dateMatch) {
           const day = dateMatch[1].padStart(2, '0');
@@ -98,7 +87,6 @@ app.get('/api/parse/:filename', async (req, res) => {
           return `${day}.${month}.${year}`;
         }
         
-        // Если не нашли, пробуем из имени файла
         const filenameMatch = filename.match(/(\d{2})\.(\d{2})\.(\d{2})/);
         if (filenameMatch) {
           const day = filenameMatch[1];
@@ -111,7 +99,6 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       contractor: (() => {
-        // Ищем продавца/поставщика в разных вариантах
         const patterns = [
           /Продавец\s+([^\n]+)/i,
           /Поставщик\s+([^\n]+)/i,
@@ -136,60 +123,59 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск суммы в столбце 9...');
-        
+        console.log('🔍 Умный поиск итоговой суммы с НДС...');
         const lines = data.text.split('\n');
-        let foundColumn9 = false;
-        let amounts = [];
-
+        
+        // Ищем блок с итоговыми суммами после товаров
+        let foundGoodsSection = false;
+        let goodsCount = 0;
+        
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
-          // Ищем начало столбца с идентификатором 9
-          if (line.includes('9') && !foundColumn9) {
-            // Проверяем контекст - это должен быть заголовок таблицы
-            const prevLines = lines.slice(Math.max(0, i-2), i+3).join(' ');
-            if (prevLines.includes('Стоимость') && prevLines.includes('с налогом')) {
-              console.log('🎯 Найден столбец 9 с заголовком стоимости с налогом');
-              foundColumn9 = true;
-              continue;
-            }
+          // Считаем товары (строки с ценами)
+          if (line.match(/\d+[.,]\d{2}.*\d+[.,]\d{2}.*\d+[.,]\d{2}/)) {
+            goodsCount++;
+            foundGoodsSection = true;
+            console.log(`📦 Товар ${goodsCount}: ${line}`);
           }
           
-          // После нахождения столбца 9, ищем числа в этом столбце
-          if (foundColumn9) {
-            // Ищем числа в формате XXX.XX в текущей строке
-            const numbers = line.match(/(\d+[.,]\d{2})/g);
-            if (numbers) {
-              numbers.forEach(num => {
-                const amount = parseFloat(num.replace(',', '.'));
-                if (!isNaN(amount) && amount > 0) {
-                  amounts.push(amount);
-                  console.log(`💰 Найдена сумма в столбце 9: ${amount}`);
-                }
-              });
-            }
+          // После товаров ищем итоговую строку
+          if (foundGoodsSection && goodsCount >= 2 && line.includes('Всего к оплате')) {
+            console.log('🎯 Найдена итоговая строка:', line);
             
-            // Если нашли пустую строку или конец таблицы, выходим
-            if (line === '' && amounts.length > 0) {
-              break;
+            // Ищем суммы в следующих 5 строках
+            for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+              const numbers = lines[j].match(/(\d+[.,]\d{2})/g);
+              if (numbers && numbers.length >= 3) {
+                // В итоговой строке обычно 3 суммы: без НДС, НДС, с НДС
+                // Нам нужна последняя (292.00)
+                const finalAmount = parseFloat(numbers[numbers.length - 1].replace(',', '.'));
+                if (!isNaN(finalAmount) && finalAmount > 100) {
+                  console.log(`💰 Итоговая сумма с НДС: ${finalAmount}`);
+                  return finalAmount;
+                }
+              }
             }
           }
         }
         
-        // Берем последнюю сумму из столбца 9 (итоговая)
+        // Если не нашли по структуре, ищем самую большую разумную сумму
+        console.log('🔍 Резервный поиск самой большой суммы...');
+        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
+        const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')))
+                                 .filter(amount => amount > 50 && amount < 10000); // Фильтр разумных сумм
         if (amounts.length > 0) {
-          const finalAmount = amounts[amounts.length - 1];
-          console.log(`🎯 Итоговая сумма из столбца 9: ${finalAmount}`);
-          return finalAmount;
+          const maxAmount = Math.max(...amounts);
+          console.log(`💰 Самая большая разумная сумма: ${maxAmount}`);
+          return maxAmount;
         }
         
-        console.log('❌ Сумма в столбце 9 не найдена');
+        console.log('❌ Сумма не найдена');
         return 0;
       })(),
       
       incomingNumber: (() => {
-        // Ищем номер счета-фактуры в разных форматах
         const patterns = [
           /Счет-фактура\s+No?\s*(\d+\/\d+)/i,
           /Счет-фактура\s+No?\s*(\d+)/i,
@@ -198,9 +184,7 @@ app.get('/api/parse/:filename', async (req, res) => {
           /№\s*(\d+\/\d+)\s+от/i,
           /№\s*(\d+)\s+от/i,
           /(\d{5,}\/\d{2,})/i,
-          /(\d{6,})/i,
-          /Счет-фактура[^]*?(\d+\/\d+)/i,
-          /Счет-фактура[^]*?(\d+)/i
+          /(\d{6,})/i
         ];
         
         for (let pattern of patterns) {
@@ -217,7 +201,6 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       comment: (() => {
-        // Ищем комментарий в разных вариантах написания
         const patterns = [
           /Счет-Оферта\s+No\s*(\d+)-(\d+)/i,
           /Счет-Оферта\s+№\s*(\d+)-(\d+)/i,
@@ -227,7 +210,6 @@ app.get('/api/parse/:filename', async (req, res) => {
         for (let pattern of patterns) {
           const match = data.text.match(pattern);
           if (match) {
-            // Возвращаем последние 4 цифры (0566)
             if (match[2]) return match[2];
             if (match[1] && match[1].length >= 4) return match[1].slice(-4);
             if (match[1]) return match[1];
@@ -249,18 +231,11 @@ app.get('/api/parse/:filename', async (req, res) => {
   }
 });
 
-// Эндпоинт для скачивания PDF файла - РЕДИРЕКТ НА S3
 app.get('/api/download/:filename', async (req, res) => {
   try {
     const filename = decodeURIComponent(req.params.filename);
-    console.log('📥 Запрос на скачивание:', filename);
-    
-    // Редирект на прямую ссылку S3
     const directUrl = `https://storage.yandexcloud.net/faktura35/С-фактура(PDF)/${encodeURIComponent(filename)}`;
-    console.log('🔗 Редирект на:', directUrl);
-    
     res.redirect(directUrl);
-    
   } catch (error) {
     console.error('❌ Ошибка:', error);
     res.status(500).json({ error: error.message });
