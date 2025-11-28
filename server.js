@@ -138,7 +138,7 @@ app.get('/api/parse/:filename', async (req, res) => {
             const allNumbers = [];
             for (let j = i; j < Math.min(i + 6, lines.length); j++) {
               // Ищем числа в формате X XXX.XX или XXX.XX
-              const numbers = lines[j].match/(\d{1,3}(?:\s\d{3})*[.,]\d{2})|(\d+[.,]\d{2})/g);
+              const numbers = lines[j].match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})|(\d+[.,]\d{2})/g);
               if (numbers) {
                 numbers.forEach(num => {
                   // Убираем пробелы и заменяем запятые на точки
