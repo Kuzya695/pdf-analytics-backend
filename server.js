@@ -131,31 +131,42 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск суммы в таблице товаров...');
+        console.log('🔍 Поиск суммы по ячейке таблицы...');
         
         const lines = data.text.split('\n');
-        let lastTableNumber = 0;
         
-        // Простой подход: ищем строки с числами через пробелы (как в таблице)
+        // 1. Сначала находим строку "Всего к оплате"
+        let totalLineIndex = -1;
         for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          
-          // Ищем строки с форматом "число число число число" (строки таблицы)
-          const numbers = line.match(/(\d+[.,]\d{2})/g);
-          if (numbers && numbers.length >= 2) {
-            // Берем последнее число в строке
-            const lastNum = numbers[numbers.length - 1];
-            const amount = parseFloat(lastNum.replace(',', '.'));
-            
-            if (!isNaN(amount)) {
-              lastTableNumber = amount;
-              console.log(`📊 Найдена сумма в таблице: ${amount}`);
-            }
+          if (lines[i].includes('Всего к оплате')) {
+            totalLineIndex = i;
+            console.log('🎯 Найдена строка "Всего к оплате" в строке', i);
+            break;
           }
         }
         
-        console.log(`💰 Финальная сумма: ${lastTableNumber}`);
-        return lastTableNumber;
+        if (totalLineIndex === -1) {
+          console.log('❌ Строка "Всего к оплате" не найдена');
+          return 0;
+        }
+        
+        // 2. В строке "Всего к оплате" ищем числа - последнее число это итоговая сумма
+        const totalLine = lines[totalLineIndex].trim();
+        const numbers = totalLine.match(/(\d+[.,]\d{2})/g);
+        
+        if (numbers && numbers.length > 0) {
+          // Берем ПОСЛЕДНЕЕ число в строке "Всего к оплате"
+          const lastNumber = numbers[numbers.length - 1];
+          const amount = parseFloat(lastNumber.replace(',', '.'));
+          
+          if (!isNaN(amount)) {
+            console.log(`💰 ИТОГОВАЯ СУММА: ${amount}`);
+            return amount;
+          }
+        }
+        
+        console.log('❌ Сумма не найдена в строке "Всего к оплате"');
+        return 0;
       })(),
       
       incomingNumber: (() => {
