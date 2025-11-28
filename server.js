@@ -134,15 +134,19 @@ app.get('/api/parse/:filename', async (req, res) => {
           if (line.includes('Всего к оплате')) {
             console.log('🎯 Найдена строка "Всего к оплате"');
             
-            // Собираем ВСЕ числа из следующих строк
+            // Собираем ВСЕ числа из следующих строк (включая числа с пробелами)
             const allNumbers = [];
             for (let j = i; j < Math.min(i + 6, lines.length); j++) {
-              const numbers = lines[j].match(/(\d+[.,]\d{2})/g);
+              // Ищем числа в формате X XXX.XX или XXX.XX
+              const numbers = lines[j].match/(\d{1,3}(?:\s\d{3})*[.,]\d{2})|(\d+[.,]\d{2})/g);
               if (numbers) {
                 numbers.forEach(num => {
-                  const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
+                  // Убираем пробелы и заменяем запятые на точки
+                  const cleanNum = num.replace(/\s/g, '').replace(',', '.');
+                  const amount = parseFloat(cleanNum);
                   if (!isNaN(amount) && amount > 10) {
                     allNumbers.push(amount);
+                    console.log(`📊 Найдено число: ${num} -> ${amount}`);
                   }
                 });
               }
@@ -180,13 +184,15 @@ app.get('/api/parse/:filename', async (req, res) => {
           
           // В секции товаров ищем строки с несколькими числами (цены)
           if (inProductsSection) {
-            const numbers = line.match(/(\d+[.,]\d{2})/g);
+            // Ищем числа с пробелами и без
+            const numbers = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})|(\d+[.,]\d{2})/g);
             if (numbers && numbers.length >= 3) {
               // Берем последнее число в строке (стоимость с НДС)
-              const productAmount = parseFloat(numbers[numbers.length - 1].replace(',', '.').replace(/\s/g, ''));
+              const cleanNum = numbers[numbers.length - 1].replace(/\s/g, '').replace(',', '.');
+              const productAmount = parseFloat(cleanNum);
               if (!isNaN(productAmount) && productAmount > 10) {
                 productAmounts.push(productAmount);
-                console.log(`📦 Стоимость товара с НДС: ${productAmount}`);
+                console.log(`📦 Стоимость товара с НДС: ${numbers[numbers.length - 1]} -> ${productAmount}`);
               }
             }
           }
