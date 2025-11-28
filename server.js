@@ -67,6 +67,11 @@ app.get('/api/parse/:filename', async (req, res) => {
     // Парсим PDF
     const data = await pdfParse(pdfBuffer);
     
+    // ДЛЯ ОТЛАДКИ: выводим весь текст PDF
+    console.log('=== ВЕСЬ ТЕКСТ PDF ===');
+    console.log(data.text);
+    console.log('=== КОНЕЦ ТЕКСТА PDF ===');
+    
     // Извлекаем данные из текста
     const extractedData = {
       date: (() => {
@@ -131,41 +136,55 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск суммы по ячейке таблицы...');
+        console.log('🔍 Поиск суммы в PDF...');
         
         const lines = data.text.split('\n');
         
-        // 1. Сначала находим строку "Всего к оплате"
-        let totalLineIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes('Всего к оплате')) {
-            totalLineIndex = i;
-            console.log('🎯 Найдена строка "Всего к оплате" в строке', i);
-            break;
+        // ВАРИАНТ 1: Ищем строку "Всего к оплате" (разные варианты написания)
+        const totalPatterns = [
+          'Всего к оплате',
+          'Всего к оплате',
+          'Всего',
+          'Итого',
+          'К оплате'
+        ];
+        
+        for (let pattern of totalPatterns) {
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(pattern)) {
+              console.log(`🎯 Найдена строка с "${pattern}":`, lines[i]);
+              
+              // Ищем числа в этой строке и следующих 2 строках
+              for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+                const currentLine = lines[j].trim();
+                const numbers = currentLine.match(/(\d+[.,]\d{2})/g);
+                
+                if (numbers && numbers.length > 0) {
+                  // Берем ПОСЛЕДНЕЕ число
+                  const lastNumber = numbers[numbers.length - 1];
+                  const amount = parseFloat(lastNumber.replace(',', '.'));
+                  
+                  if (!isNaN(amount) && amount > 0) {
+                    console.log(`💰 Найдена сумма: ${amount}`);
+                    return amount;
+                  }
+                }
+              }
+            }
           }
         }
         
-        if (totalLineIndex === -1) {
-          console.log('❌ Строка "Всего к оплате" не найдена');
-          return 0;
+        // ВАРИАНТ 2: Ищем самую большую сумму в документе
+        console.log('🔍 Поиск самой большой суммы...');
+        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
+        if (allNumbers.length > 0) {
+          const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')));
+          const maxAmount = Math.max(...amounts);
+          console.log(`💰 Самая большая сумма: ${maxAmount}`);
+          return maxAmount;
         }
         
-        // 2. В строке "Всего к оплате" ищем числа - последнее число это итоговая сумма
-        const totalLine = lines[totalLineIndex].trim();
-        const numbers = totalLine.match(/(\d+[.,]\d{2})/g);
-        
-        if (numbers && numbers.length > 0) {
-          // Берем ПОСЛЕДНЕЕ число в строке "Всего к оплате"
-          const lastNumber = numbers[numbers.length - 1];
-          const amount = parseFloat(lastNumber.replace(',', '.'));
-          
-          if (!isNaN(amount)) {
-            console.log(`💰 ИТОГОВАЯ СУММА: ${amount}`);
-            return amount;
-          }
-        }
-        
-        console.log('❌ Сумма не найдена в строке "Всего к оплате"');
+        console.log('❌ Сумма не найдена');
         return 0;
       })(),
       
