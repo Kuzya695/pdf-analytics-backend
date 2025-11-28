@@ -131,43 +131,34 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск итоговой суммы в таблице...');
+        console.log('🔍 Поиск суммы "Всего к оплате" в строке товара...');
         
         const lines = data.text.split('\n');
-        let tableRows = [];
         
-        // Собираем все строки, которые выглядят как строки таблицы с суммами
+        // Ищем строку с товаром
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
-          // Ищем строки с паттерном чисел через пробелы (как в таблице)
-          if (line.match(/\d+[.,]\d{2}\s+\D+\s+\d+%\s+\d+[.,]\d{2}\s+\d+[.,]\d{2}/) ||
-              line.match(/(\d+[.,]\d{2}\s+){2,}\d+[.,]\d{2}/)) {
-            console.log('📊 Найдена строка таблицы:', line);
-            tableRows.push(line);
-          }
-        }
-        
-        // Если нашли строки таблицы, берем ПОСЛЕДНЮЮ строку и последнее число в ней
-        if (tableRows.length > 0) {
-          const lastRow = tableRows[tableRows.length - 1];
-          console.log('🎯 Последняя строка таблицы:', lastRow);
-          
-          // Ищем все числа в этой строке
-          const numbers = lastRow.match(/(\d+[.,]\d{2})/g);
-          if (numbers && numbers.length > 0) {
-            // Берем ПОСЛЕДНЕЕ число в строке - это "Стоимость с налогом - всего"
-            const lastNumber = numbers[numbers.length - 1];
-            const amount = parseFloat(lastNumber.replace(',', '.'));
+          // Строка товара: содержит "шт" и числа
+          if (line.includes('шт') && line.match(/\d{1,3}(?:\s\d{3})*[.,]\d{2}/)) {
+            console.log('🎯 Найдена строка товара:', line);
             
-            if (!isNaN(amount)) {
-              console.log(`💰 ИТОГОВАЯ СУММА: ${amount}`);
-              return amount;
+            // Ищем ВСЕ суммы в строке
+            const amountMatches = line.match(/(\d{1,3}(?:\s\d{3})*[.,]\d{2})/g);
+            if (amountMatches && amountMatches.length > 0) {
+              // Берем ПОСЛЕДНЮЮ сумму - это "Всего к оплате"
+              const totalAmount = amountMatches[amountMatches.length - 1];
+              const amount = parseFloat(totalAmount.replace(/\s/g, '').replace(',', '.'));
+              
+              if (!isNaN(amount) && amount > 0) {
+                console.log(`💰 Всего к оплате: ${amount}`);
+                return amount;
+              }
             }
           }
         }
         
-        console.log('❌ Итоговая сумма не найдена в таблице');
+        console.log('❌ Сумма не найдена');
         return 0;
       })(),
       
