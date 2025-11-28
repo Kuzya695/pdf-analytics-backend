@@ -123,55 +123,46 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Умный поиск итоговой суммы с НДС...');
+        console.log('🔍 Точный поиск итоговой суммы...');
         const lines = data.text.split('\n');
         
-        // Ищем блок с итоговыми суммами после товаров
-        let foundGoodsSection = false;
-        let goodsCount = 0;
-        
+        // Ищем конкретно итоговую строку таблицы
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
-          // Считаем товары (строки с ценами)
-          if (line.match(/\d+[.,]\d{2}.*\d+[.,]\d{2}.*\d+[.,]\d{2}/)) {
-            goodsCount++;
-            foundGoodsSection = true;
-            console.log(`📦 Товар ${goodsCount}: ${line}`);
-          }
-          
-          // После товаров ищем итоговую строку
-          if (foundGoodsSection && goodsCount >= 2 && line.includes('Всего к оплате')) {
-            console.log('🎯 Найдена итоговая строка:', line);
+          // Ищем строку, которая содержит "Всего к оплате" и числа 243.33, 48.67, 292.00
+          if (line.includes('Всего к оплате')) {
+            console.log('🎯 Найдена строка "Всего к оплате":', line);
             
-            // Ищем суммы в следующих 5 строках
-            for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-              const numbers = lines[j].match(/(\d+[.,]\d{2})/g);
-              if (numbers && numbers.length >= 3) {
-                // В итоговой строке обычно 3 суммы: без НДС, НДС, с НДС
-                // Нам нужна последняя (292.00)
-                const finalAmount = parseFloat(numbers[numbers.length - 1].replace(',', '.'));
-                if (!isNaN(finalAmount) && finalAmount > 100) {
-                  console.log(`💰 Итоговая сумма с НДС: ${finalAmount}`);
-                  return finalAmount;
-                }
+            // Ищем ВСЕ числа в этой и следующих 2 строках
+            const searchLines = [line, lines[i+1] || '', lines[i+2] || ''];
+            const allNumbers = [];
+            
+            searchLines.forEach((searchLine, index) => {
+              const numbers = searchLine.match(/(\d+[.,]\d{2})/g);
+              if (numbers) {
+                numbers.forEach(num => {
+                  const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
+                  if (!isNaN(amount)) {
+                    allNumbers.push({amount, line: i + index, original: num});
+                  }
+                });
               }
+            });
+            
+            console.log('📊 Все найденные числа вокруг "Всего к оплате":', allNumbers);
+            
+            // В итоговой строке должно быть 3 числа: 243.33, 48.67, 292.00
+            // Нам нужно последнее - 292.00
+            if (allNumbers.length >= 3) {
+              const finalAmount = allNumbers[allNumbers.length - 1].amount;
+              console.log(`💰 Итоговая сумма с НДС: ${finalAmount}`);
+              return finalAmount;
             }
           }
         }
         
-        // Если не нашли по структуре, ищем самую большую разумную сумму
-        console.log('🔍 Резервный поиск самой большой суммы...');
-        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
-        const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')))
-                                 .filter(amount => amount > 50 && amount < 10000); // Фильтр разумных сумм
-        if (amounts.length > 0) {
-          const maxAmount = Math.max(...amounts);
-          console.log(`💰 Самая большая разумная сумма: ${maxAmount}`);
-          return maxAmount;
-        }
-        
-        console.log('❌ Сумма не найдена');
+        console.log('❌ Итоговая сумма не найдена');
         return 0;
       })(),
       
