@@ -131,29 +131,57 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск ИТОГОВОЙ суммы...');
+        console.log('🔍 Поиск ИТОГОВОЙ суммы с НДС...');
         
         const lines = data.text.split('\n');
         
-        // 1. Сначала ищем явно "Всего к оплате"
+        // 1. Ищем строки таблицы с несколькими числами
+        let tableRows = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Ищем строки с 3+ числами (это строки таблицы)
+          const numbers = line.match(/(\d+[.,]\d{2})/g);
+          if (numbers && numbers.length >= 3) {
+            tableRows.push({ line, numbers, index: i });
+          }
+        }
+        
+        // Берем ПОСЛЕДНЮЮ строку таблицы - это итог
+        if (tableRows.length > 0) {
+          const lastRow = tableRows[tableRows.length - 1];
+          console.log('📊 Последняя строка таблицы:', lastRow.line);
+          console.log('🔢 Все числа в строке:', lastRow.numbers);
+          
+          // Берем ПОСЛЕДНЕЕ число в строке - это "Стоимость с налогом - всего"
+          const lastNumber = lastRow.numbers[lastRow.numbers.length - 1];
+          const amount = parseFloat(lastNumber.replace(',', '.'));
+          
+          if (!isNaN(amount)) {
+            console.log(`💰 ИТОГОВАЯ СУММА С НДС: ${amount}`);
+            return amount;
+          }
+        }
+        
+        // 2. Если не нашли в таблице, ищем "Всего к оплате"
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
           if (line.includes('Всего к оплате')) {
             console.log('🎯 Найдена строка "Всего к оплате":', line);
             
-            // Ищем все числа в этой строке и следующих 2 строках
+            // Ищем все числа в этой и следующих строках
             for (let j = i; j < Math.min(i + 3, lines.length); j++) {
               const currentLine = lines[j].trim();
               const numbers = currentLine.match(/(\d+[.,]\d{2})/g);
               
               if (numbers && numbers.length > 0) {
-                // Берем ПОСЛЕДНЕЕ число - это итоговая сумма
+                // Берем ПОСЛЕДНЕЕ число
                 const lastNumber = numbers[numbers.length - 1];
                 const amount = parseFloat(lastNumber.replace(',', '.'));
                 
-                if (!isNaN(amount) && amount > 100) { // >100 чтобы отсечь суммы товаров
-                  console.log(`💰 ИТОГОВАЯ СУММА: ${amount}`);
+                if (!isNaN(amount)) {
+                  console.log(`💰 Итоговая сумма: ${amount}`);
                   return amount;
                 }
               }
@@ -161,34 +189,6 @@ app.get('/api/parse/:filename', async (req, res) => {
           }
         }
         
-        // 2. Если не нашли "Всего к оплате", ищем по таблице
-        let tableRows = [];
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          
-          // Ищем строки с несколькими числами (как в таблице)
-          const numbers = line.match(/(\d+[.,]\d{2})/g);
-          if (numbers && numbers.length >= 3) {
-            tableRows.push({ line, numbers });
-          }
-        }
-        
-        // Берем последнюю строку таблицы (это итог)
-        if (tableRows.length > 0) {
-          const lastRow = tableRows[tableRows.length - 1];
-          console.log('📊 Последняя строка таблицы:', lastRow.line);
-          
-          // Берем последнее число в строке
-          const lastNumber = lastRow.numbers[lastRow.numbers.length - 1];
-          const amount = parseFloat(lastNumber.replace(',', '.'));
-          
-          if (!isNaN(amount) && amount > 100) {
-            console.log(`💰 Итоговая сумма из таблицы: ${amount}`);
-            return amount;
-          }
-        }
-        
-        // 3. Если ничего не нашли, возвращаем 0
         console.log('❌ Итоговая сумма не найдена');
         return 0;
       })(),
