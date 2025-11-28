@@ -123,46 +123,80 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Упрощенный поиск суммы...');
+        console.log('🔍 Двухэтапный поиск суммы...');
         const lines = data.text.split('\n');
+        let finalAmount = 0;
         
-        // Простой поиск: ищем "Всего к оплате" и берем первое число после него
+        // ЭТАП 1: Поиск итоговой суммы по контексту
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           
           if (line.includes('Всего к оплате')) {
             console.log('🎯 Найдена строка "Всего к оплате"');
             
-            // Ищем числа в этой и следующих 5 строках
+            // Собираем ВСЕ числа из следующих строк
+            const allNumbers = [];
             for (let j = i; j < Math.min(i + 6, lines.length); j++) {
               const numbers = lines[j].match(/(\d+[.,]\d{2})/g);
               if (numbers) {
-                // Берем первое найденное число
-                const amount = parseFloat(numbers[0].replace(',', '.').replace(/\s/g, ''));
-                if (!isNaN(amount) && amount > 10) {
-                  console.log(`💰 Найдена сумма: ${amount}`);
-                  return amount;
-                }
+                numbers.forEach(num => {
+                  const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
+                  if (!isNaN(amount) && amount > 10) {
+                    allNumbers.push(amount);
+                  }
+                });
+              }
+            }
+            
+            console.log('📊 Все числа вокруг "Всего к оплате":', allNumbers);
+            
+            // Берем ПОСЛЕДНЕЕ число (это итог с НДС)
+            if (allNumbers.length > 0) {
+              finalAmount = allNumbers[allNumbers.length - 1];
+              console.log(`💰 Итоговая сумма с НДС: ${finalAmount}`);
+              return finalAmount;
+            }
+          }
+        }
+        
+        // ЭТАП 2: Если не нашли итог, складываем суммы товаров
+        console.log('🔍 Суммируем стоимости товаров...');
+        const productAmounts = [];
+        let inProductsSection = false;
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Ищем начало секции товаров
+          if (line.match(/Наименование товара|Код вида товара/)) {
+            inProductsSection = true;
+            continue;
+          }
+          
+          // Ищем конец секции товаров
+          if (inProductsSection && (line.includes('Всего к оплате') || line.includes('Итого'))) {
+            break;
+          }
+          
+          // В секции товаров ищем строки с несколькими числами (цены)
+          if (inProductsSection) {
+            const numbers = line.match(/(\d+[.,]\d{2})/g);
+            if (numbers && numbers.length >= 3) {
+              // Берем последнее число в строке (стоимость с НДС)
+              const productAmount = parseFloat(numbers[numbers.length - 1].replace(',', '.').replace(/\s/g, ''));
+              if (!isNaN(productAmount) && productAmount > 10) {
+                productAmounts.push(productAmount);
+                console.log(`📦 Стоимость товара с НДС: ${productAmount}`);
               }
             }
           }
         }
         
-        // Если не нашли, ищем самую большую сумму в документе
-        console.log('🔍 Резервный поиск самой большой суммы...');
-        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
-        let maxAmount = 0;
-        
-        allNumbers.forEach(num => {
-          const amount = parseFloat(num.replace(',', '.').replace(/\s/g, ''));
-          if (!isNaN(amount) && amount > maxAmount && amount < 100000) {
-            maxAmount = amount;
-          }
-        });
-        
-        if (maxAmount > 0) {
-          console.log(`💰 Самая большая сумма: ${maxAmount}`);
-          return maxAmount;
+        // Суммируем все найденные стоимости товаров
+        if (productAmounts.length > 0) {
+          finalAmount = productAmounts.reduce((sum, amount) => sum + amount, 0);
+          console.log(`💰 Сумма всех товаров: ${finalAmount}`);
+          return finalAmount;
         }
         
         console.log('❌ Сумма не найдена');
