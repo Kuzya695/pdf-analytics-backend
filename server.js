@@ -131,23 +131,31 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск САМОЙ БОЛЬШОЙ суммы в документе...');
+        console.log('🔍 Поиск суммы в таблице товаров...');
         
-        // Находим ВСЕ числа в документе
-        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
-        console.log('🔢 Все найденные числа:', allNumbers);
+        const lines = data.text.split('\n');
+        let lastTableNumber = 0;
         
-        if (allNumbers.length === 0) {
-          console.log('❌ Числа не найдены');
-          return 0;
+        // Простой подход: ищем строки с числами через пробелы (как в таблице)
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Ищем строки с форматом "число число число число" (строки таблицы)
+          const numbers = line.match(/(\d+[.,]\d{2})/g);
+          if (numbers && numbers.length >= 2) {
+            // Берем последнее число в строке
+            const lastNum = numbers[numbers.length - 1];
+            const amount = parseFloat(lastNum.replace(',', '.'));
+            
+            if (!isNaN(amount)) {
+              lastTableNumber = amount;
+              console.log(`📊 Найдена сумма в таблице: ${amount}`);
+            }
+          }
         }
         
-        // Конвертируем в числа и находим максимальное
-        const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')));
-        const maxAmount = Math.max(...amounts);
-        
-        console.log(`💰 САМАЯ БОЛЬШАЯ СУММА: ${maxAmount}`);
-        return maxAmount;
+        console.log(`💰 Финальная сумма: ${lastTableNumber}`);
+        return lastTableNumber;
       })(),
       
       incomingNumber: (() => {
