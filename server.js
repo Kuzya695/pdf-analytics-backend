@@ -131,68 +131,23 @@ app.get('/api/parse/:filename', async (req, res) => {
       })(),
       
       amount: (() => {
-        console.log('🔍 Поиск ИТОГОВОЙ суммы с НДС...');
+        console.log('🔍 Поиск САМОЙ БОЛЬШОЙ суммы в документе...');
         
-        const lines = data.text.split('\n');
+        // Находим ВСЕ числа в документе
+        const allNumbers = data.text.match(/(\d+[.,]\d{2})/g) || [];
+        console.log('🔢 Все найденные числа:', allNumbers);
         
-        // 1. Ищем строки, которые выглядят как итоговые (содержат "X" или несколько чисел подряд)
-        let candidateRows = [];
-        
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          
-          // Ищем строки с паттерном: число число X число число (как в итоговой строке)
-          if (line.match(/(\d+[.,]\d{2}\s+){2,}[XХx]\s+(\d+[.,]\d{2}\s+){1,}\d+[.,]\d{2}/) ||
-              line.match(/(\d+[.,]\d{2}\s+){3,}\d+[.,]\d{2}/)) {
-            console.log('🎯 Найдена строка с итоговым паттерном:', line);
-            candidateRows.push({ line, numbers: line.match(/(\d+[.,]\d{2})/g), index: i });
-          }
+        if (allNumbers.length === 0) {
+          console.log('❌ Числа не найдены');
+          return 0;
         }
         
-        // Берем ПОСЛЕДНЮЮ найденную строку с итоговым паттерном
-        if (candidateRows.length > 0) {
-          const lastRow = candidateRows[candidateRows.length - 1];
-          console.log('📊 Выбрана итоговая строка:', lastRow.line);
-          console.log('🔢 Все числа в строке:', lastRow.numbers);
-          
-          // Берем ПОСЛЕДНЕЕ число в строке - это "Стоимость с налогом - всего"
-          const lastNumber = lastRow.numbers[lastRow.numbers.length - 1];
-          const amount = parseFloat(lastNumber.replace(',', '.'));
-          
-          if (!isNaN(amount)) {
-            console.log(`💰 ИТОГОВАЯ СУММА С НДС: ${amount}`);
-            return amount;
-          }
-        }
+        // Конвертируем в числа и находим максимальное
+        const amounts = allNumbers.map(num => parseFloat(num.replace(',', '.')));
+        const maxAmount = Math.max(...amounts);
         
-        // 2. Если не нашли по паттерну, ищем "Всего к оплате"
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          
-          if (line.includes('Всего к оплате')) {
-            console.log('🎯 Найдена строка "Всего к оплате":', line);
-            
-            // Ищем все числа в этой и следующих строках
-            for (let j = i; j < Math.min(i + 3, lines.length); j++) {
-              const currentLine = lines[j].trim();
-              const numbers = currentLine.match(/(\d+[.,]\d{2})/g);
-              
-              if (numbers && numbers.length > 0) {
-                // Берем ПОСЛЕДНЕЕ число
-                const lastNumber = numbers[numbers.length - 1];
-                const amount = parseFloat(lastNumber.replace(',', '.'));
-                
-                if (!isNaN(amount)) {
-                  console.log(`💰 Итоговая сумма: ${amount}`);
-                  return amount;
-                }
-              }
-            }
-          }
-        }
-        
-        console.log('❌ Итоговая сумма не найдена');
-        return 0;
+        console.log(`💰 САМАЯ БОЛЬШАЯ СУММА: ${maxAmount}`);
+        return maxAmount;
       })(),
       
       incomingNumber: (() => {
